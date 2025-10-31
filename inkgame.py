@@ -8,33 +8,15 @@ import aiohttp
 import asyncio
 import json
 import logging
+from typing import Optional, cast
+from dotenv import load_dotenv
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('discord')
 
-@bot.event
-async def on_ready():
-    logger.info(f'✅ Бот {bot.user} запущен!')
-    logger.info(f'🆔 ID бота: {bot.user.id}')
-    logger.info(f'📊 Подключен к {len(bot.guilds)} серверам')
-    
-    for guild in bot.guilds:
-        logger.info(f' - {guild.name} (id: {guild.id})')
-    
-    try:
-        synced = await bot.tree.sync()
-        logger.info(f"✅ Синхронизировано {len(synced)} команд")
-    except Exception as e:
-        logger.error(f"❌ Ошибка синхронизации: {e}")
-try:
-    from config import DISCORD_BOT_TOKEN, UNBELIEVABOAT_TOKEN
-except ImportError:
-    # Для разработки - используем .env
-    from dotenv import load_dotenv
-    load_dotenv()
-    DISCORD_BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-    UNBELIEVABOAT_TOKEN = os.getenv('UNBELIEVABOAT_TOKEN')
+# Загрузка переменных окружения
+load_dotenv()
 
 intents = discord.Intents.default()
 intents.members = True
@@ -61,11 +43,11 @@ UNBELIEVABOAT_TOKEN = os.getenv('UNBELIEVABOAT_TOKEN')
 
 # Проверка токенов при запуске
 if not DISCORD_TOKEN:
-    print("❌ Ошибка: DISCORD_BOT_TOKEN не найден в .env файле")
+    logger.error("❌ Ошибка: DISCORD_BOT_TOKEN не найден в .env файле")
     exit(1)
 
 if not UNBELIEVABOAT_TOKEN:
-    print("❌ Ошибка: UNBELIEVABOAT_TOKEN не найден в .env файле")
+    logger.error("❌ Ошибка: UNBELIEVABOAT_TOKEN не найден в .env файле")
     exit(1)
 
 # Функции для сохранения и загрузки данных
@@ -74,17 +56,17 @@ def save_data():
     data = {
         'used_numbers': list(CONFIG['used_numbers']),
         'registered_players': list(CONFIG['registered_players']),
-        'player_numbers': {str(k): v for k, v in CONFIG['player_numbers'].items()},  # Сохраняем ключи как строки
+        'player_numbers': {str(k): v for k, v in CONFIG['player_numbers'].items()},
         'registration_open': CONFIG['registration_open'],
         'game_active': CONFIG['game_active']
     }
     try:
         with open('game_data.json', 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        print("✅ Данные сохранены")
+        logger.info("✅ Данные сохранены")
         return True
     except Exception as e:
-        print(f"❌ Ошибка сохранения данных: {e}")
+        logger.error(f"❌ Ошибка сохранения данных: {e}")
         return False
 
 def load_data():
@@ -100,40 +82,46 @@ def load_data():
         CONFIG['registration_open'] = data['registration_open']
         CONFIG['game_active'] = data['game_active']
         
-        print("✅ Данные загружены")
-        print(f"📊 Загружено игроков: {len(CONFIG['registered_players'])}")
-        print(f"🔢 Использовано номеров: {len(CONFIG['used_numbers'])}")
+        logger.info("✅ Данные загружены")
+        logger.info(f"📊 Загружено игроков: {len(CONFIG['registered_players'])}")
+        logger.info(f"🔢 Использовано номеров: {len(CONFIG['used_numbers'])}")
         return True
     except FileNotFoundError:
-        print("ℹ️ Файл данных не найден, начинаем с чистого листа")
+        logger.info("ℹ️ Файл данных не найден, начинаем с чистого листа")
         return True
     except Exception as e:
-        print(f"❌ Ошибка загрузки данных: {e}")
+        logger.error(f"❌ Ошибка загрузки данных: {e}")
         return False
 
 @bot.event
 async def on_ready():
-    print(f'✅ Бот {bot.user} запущен!')
+    logger.info(f'✅ Бот {bot.user} запущен!')
+    logger.info(f'🆔 ID бота: {bot.user.id}')
     
     # Загружаем данные при запуске
     load_data()
     
-    print(f'📊 Статус регистрации: {"Открыта" if CONFIG["registration_open"] else "Закрыта"}')
-    print(f'🎫 Свободных мест: {CONFIG["max_players"] - len(CONFIG["registered_players"])}')
+    logger.info(f'📊 Статус регистрации: {"Открыта" if CONFIG["registration_open"] else "Закрыта"}')
+    logger.info(f'🎫 Свободных мест: {CONFIG["max_players"] - len(CONFIG["registered_players"])}')
+    
+    # Синхронизация команд с задержкой
+    await asyncio.sleep(2)
     
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Загружено {len(synced)} команд")
+        logger.info(f"✅ Загружено {len(synced)} команд")
+        for command in synced:
+            logger.info(f" - {command.name}")
     except Exception as e:
-        print(f"❌ Ошибка синхронизации команд: {e}")
+        logger.error(f"❌ Ошибка синхронизации команд: {e}")
 
-def remove_number_from_nick(nickname):
+def remove_number_from_nick(nickname: Optional[str]) -> str:
     """Удаляет номер из ника в формате (123)"""
     if nickname:
         return re.sub(r'\s*\(\d{3}\)\s*$', '', nickname).strip()
-    return nickname
+    return ""
 
-def add_number_to_nick(nickname, number):
+def add_number_to_nick(nickname: Optional[str], number: str) -> str:
     """Добавляет номер к нику в формате (123)"""
     clean_nick = remove_number_from_nick(nickname)
     new_nick = f"{clean_nick} ({number})"
@@ -166,6 +154,10 @@ async def add_money_to_user(guild_id: int, user_id: int, amount: int):
 @app_commands.default_permissions(administrator=True)
 async def start(interaction: discord.Interaction):
     """Открытие регистрации"""
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+        return
+        
     if CONFIG['registration_open']:
         embed = discord.Embed(
             title="🚫 Ошибка",
@@ -210,6 +202,10 @@ async def start(interaction: discord.Interaction):
 @bot.tree.command(name="reg", description="Зарегистрироваться в игре")
 async def reg(interaction: discord.Interaction):
     """Команда для регистрации игрока"""
+    
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+        return
     
     # Проверка открыта ли регистрация
     if not CONFIG['registration_open']:
@@ -291,9 +287,10 @@ async def reg(interaction: discord.Interaction):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
     
-    # Выдача роли игроку
+    # Выдача роли игроку - приводим к Member для доступа к add_roles
+    member = cast(discord.Member, interaction.user)
     try:
-        await interaction.user.add_roles(registration_role)
+        await member.add_roles(registration_role)
     except discord.Forbidden:
         embed = discord.Embed(
             title="❌ Ошибка прав доступа",
@@ -305,10 +302,10 @@ async def reg(interaction: discord.Interaction):
     
     # Изменение ника игрока
     try:
-        new_nickname = add_number_to_nick(interaction.user.display_name, formatted_number)
-        await interaction.user.edit(nick=new_nickname)
+        new_nickname = add_number_to_nick(member.display_name, formatted_number)
+        await member.edit(nick=new_nickname)
     except discord.Forbidden:
-        pass
+        pass  # Нет прав на изменение ника
     
     # Сообщение о регистрации
     embed = discord.Embed(
@@ -415,6 +412,10 @@ async def status(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 async def reset(interaction: discord.Interaction, игрок: discord.Member):
     """Сброс регистрации конкретного игрока"""
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+        return
+        
     if игрок.id not in CONFIG['registered_players']:
         embed = discord.Embed(
             title="❌ Ошибка",
@@ -460,7 +461,7 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
             original_nickname = игрок.name
         await игрок.edit(nick=original_nickname)
     except discord.Forbidden:
-        pass
+        pass  # Нет прав на изменение ника
     
     embed = discord.Embed(
         title="🔄 РЕГИСТРАЦИЯ СБРОШЕНА",
@@ -481,6 +482,10 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
 @app_commands.default_permissions(administrator=True)
 async def end(interaction: discord.Interaction):
     """Закрытие регистрации или завершение игры"""
+    
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+        return
     
     if not CONFIG['game_active']:
         embed = discord.Embed(
@@ -755,51 +760,6 @@ async def load_cmd(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Слеш-команда для экспорта данных (админы)
-@bot.tree.command(name="export", description="Экспорт данных в файл (админы)")
-@app_commands.default_permissions(administrator=True)
-async def export_cmd(interaction: discord.Interaction):
-    """Экспорт данных в файл"""
-    if not CONFIG['registered_players']:
-        await interaction.response.send_message("❌ Нет данных для экспорта", ephemeral=True)
-        return
-    
-    # Создаем текстовый файл с данными
-    data_lines = []
-    data_lines.append("=== ЭКСПОРТ ДАННЫХ ИГРЫ ===")
-    data_lines.append(f"Всего игроков: {len(CONFIG['registered_players'])}")
-    data_lines.append(f"Использованные номера: {len(CONFIG['used_numbers'])}")
-    data_lines.append(f"Регистрация открыта: {CONFIG['registration_open']}")
-    data_lines.append(f"Игра активна: {CONFIG['game_active']}")
-    data_lines.append("")
-    data_lines.append("СПИСОК ИГРОКОВ:")
-    
-    for user_id in CONFIG['registered_players']:
-        user = bot.get_user(user_id)
-        player_number = CONFIG['player_numbers'].get(user_id, "???")
-        if user:
-            data_lines.append(f"- {user.display_name} (ID: {user_id}) -> Номер: {player_number}")
-    
-    # Сохраняем в файл
-    filename = f"game_export_{interaction.id}.txt"
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(data_lines))
-    
-    # Отправляем файл
-    file = discord.File(filename, filename=filename)
-    
-    embed = discord.Embed(
-        title="📁 ЭКСПОРТ ДАННЫХ",
-        description=f"Успешно экспортировано {len(CONFIG['registered_players'])} игроков",
-        color=0xff0000
-    )
-    
-    await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
-    
-    # Удаляем временный файл
-    import os
-    os.remove(filename)
-
 # Обычная команда для синхронизации (на случай если команды не появляются)
 @bot.command()
 @commands.is_owner()
@@ -823,16 +783,4 @@ async def sync(ctx):
 
 # Запуск бота
 if __name__ == "__main__":
-@bot.event
-async def on_ready():
-    print(f'✅ Бот {bot.user} запущен!')
-    
-    # Ждем 2 секунды перед синхронизацией
-    await asyncio.sleep(2)
-    
-    try:
-        synced = await bot.tree.sync()
-        print(f"✅ Синхронизировано {len(synced)} команд")
-    except Exception as e:
-        print(f"❌ Ошибка синхронизации: {e}")
     bot.run(DISCORD_TOKEN)
