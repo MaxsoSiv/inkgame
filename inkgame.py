@@ -7,6 +7,26 @@ import re
 import aiohttp
 import asyncio
 import json
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('discord')
+
+@bot.event
+async def on_ready():
+    logger.info(f'✅ Бот {bot.user} запущен!')
+    logger.info(f'🆔 ID бота: {bot.user.id}')
+    logger.info(f'📊 Подключен к {len(bot.guilds)} серверам')
+    
+    for guild in bot.guilds:
+        logger.info(f' - {guild.name} (id: {guild.id})')
+    
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f"✅ Синхронизировано {len(synced)} команд")
+    except Exception as e:
+        logger.error(f"❌ Ошибка синхронизации: {e}")
 try:
     from config import DISCORD_BOT_TOKEN, UNBELIEVABOAT_TOKEN
 except ImportError:
@@ -803,4 +823,16 @@ async def sync(ctx):
 
 # Запуск бота
 if __name__ == "__main__":
+@bot.event
+async def on_ready():
+    print(f'✅ Бот {bot.user} запущен!')
+    
+    # Ждем 2 секунды перед синхронизацией
+    await asyncio.sleep(2)
+    
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Синхронизировано {len(synced)} команд")
+    except Exception as e:
+        print(f"❌ Ошибка синхронизации: {e}")
     bot.run(DISCORD_TOKEN)
