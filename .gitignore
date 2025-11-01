@@ -1,24 +1,5 @@
-# Токены и секреты
 .env
-config.py
-secrets/
-
-# Данные игры
 game_data.json
-backup_*.json
-
-# Кэш Python
 __pycache__/
 *.pyc
-.python-version
-
-# Логи
-discord.log
 *.log
-
-# Системные файлы
-.DS_Store
-Thumbs.db
-
-# Replit специфичные
-.replit
