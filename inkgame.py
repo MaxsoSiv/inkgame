@@ -52,6 +52,32 @@ if not UNBELIEVABOAT_TOKEN:
     logger.error("❌ Ошибка: UNBELIEVABOAT_TOKEN не найден в .env файле")
     exit(1)
 
+def save_data_with_backup():
+    """Сохраняет данные и создает резервную копию"""
+    if save_data():
+        # Создаем резервную копию с timestamp
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"backups/game_data_backup_{timestamp}.json"
+        
+        # Создаем папку backups если нет
+        import os
+        if not os.path.exists('backups'):
+            os.makedirs('backups')
+        
+        # Копируем файл
+        import shutil
+        shutil.copy2('game_data.json', backup_filename)
+        
+        # Удаляем старые бэкапы (оставляем последние 5)
+        backup_files = sorted([f for f in os.listdir('backups') if f.startswith('game_data_backup_')])
+        if len(backup_files) > 5:
+            for old_backup in backup_files[:-5]:
+                os.remove(f"backups/{old_backup}")
+        
+        return True
+    return False
+
 # Функции для сохранения и загрузки данных
 def save_data():
     """Сохраняет данные в файл"""
@@ -677,6 +703,79 @@ async def status(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Слеш-команда сброса (только для админов)
+
+@bot.tree.command(name="restore", description="Восстановить данные из файла (админы)")
+@app_commands.default_permissions(administrator=True)
+async def restore(interaction: discord.Interaction):
+    """Восстанавливает данные из файла"""
+    # Эта команда требует загрузки файла через Discord
+    await interaction.response.send_message(
+        "📁 Отправьте файл `game_backup.json` в следующем сообщении", 
+        ephemeral=True
+    )
+    
+    def check(message):
+        return (message.author == interaction.user and 
+                message.channel == interaction.channel and
+                message.attachments and
+                message.attachments[0].filename.endswith('.json'))
+    
+    try:
+        msg = await bot.wait_for('message', timeout=60.0, check=check)
+        attachment = msg.attachments[0]
+        
+        # Скачиваем и сохраняем файл
+        await attachment.save('game_data.json')
+        
+        # Перезагружаем данные
+        if load_data():
+            embed = discord.Embed(
+                title="🔄 ДАННЫЕ ВОССТАНОВЛЕНЫ",
+                description=f"Успешно восстановлено {len(CONFIG['registered_players'])} игроков",
+                color=0x00ff00
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
+                description="Не удалось загрузить данные из файла",
+                color=0xff0000
+            )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except asyncio.TimeoutError:
+        await interaction.followup.send("❌ Время ожидания файла истекло", ephemeral=True)
+
+@bot.tree.command(name="backup", description="Создать резервную копию данных (админы)")
+@app_commands.default_permissions(administrator=True)
+async def backup(interaction: discord.Interaction):
+    """Создает резервную копию данных"""
+    if save_data():
+        # Создаем файл для отправки
+        filename = f"backup_{interaction.id}.json"
+        with open('game_data.json', 'r', encoding='utf-8') as f:
+            backup_data = f.read()
+        
+        # Сохраняем временный файл
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(backup_data)
+        
+        file = discord.File(filename, filename="game_backup.json")
+        
+        embed = discord.Embed(
+            title="💾 РЕЗЕРВНАЯ КОПИЯ СОЗДАНА",
+            description=f"Сохранено {len(CONFIG['registered_players'])} игроков",
+            color=0x00ff00
+        )
+        
+        await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
+        
+        # Удаляем временный файл
+        import os
+        os.remove(filename)
+    else:
+        await interaction.response.send_message("❌ Ошибка создания бэкапа", ephemeral=True)
+
 @bot.tree.command(name="reset", description="Сбросить регистрацию конкретного игрока (только для админов)")
 @app_commands.default_permissions(administrator=True)
 async def reset(interaction: discord.Interaction, игрок: discord.Member):
@@ -1079,4 +1178,5 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
