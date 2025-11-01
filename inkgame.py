@@ -345,6 +345,273 @@ async def reg(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Слеш-команда статуса
+
+@bot.tree.command(name="help", description="Показать справку по командам")
+async def help_cmd(interaction: discord.Interaction):
+    """Показывает справку по командам"""
+    embed = discord.Embed(
+        title="📚 СПРАВКА ПО КОМАНДАМ",
+        color=0xff0000
+    )
+    
+    # Команды для всех
+    embed.add_field(
+        name="🎮 Для всех игроков",
+        value=(
+            "`/reg` - Зарегистрироваться\n"
+            "`/status` - Статус регистрации\n"
+            "`/mynumber` - Мой номер\n"
+            "`/players` - Список участников\n"
+            "`/ping` - Проверить пинг"
+        ),
+        inline=False
+    )
+    
+    # Админ команды
+    if interaction.user.guild_permissions.administrator:
+        embed.add_field(
+            name="⚙️ Для администраторов",
+            value=(
+                "`/start` - Открыть регистрацию\n"
+                "`/end` - Завершить игру\n"
+                "`/list` - Список игроков\n"
+                "`/reset` - Сбросить игрока\n"
+                "`/broadcast` - Рассылка\n"
+                "`/changenumber` - Изменить номер\n"
+                "`/freenumbers` - Свободные номера\n"
+                "`/save` - Сохранить данные\n"
+                "`/load` - Загрузить данные"
+            ),
+            inline=False
+        )
+    
+    embed.set_footer(text="Система регистрации • Ink Game")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="ping", description="Проверить пинг бота")
+async def ping(interaction: discord.Interaction):
+    """Показывает задержку бота"""
+    latency = round(bot.latency * 1000)
+    
+    embed = discord.Embed(
+        title="🏓 PONG!",
+        color=0xff0000
+    )
+    embed.add_field(
+        name="📶 Задержка",
+        value=f"```{latency}мс```",
+        inline=True
+    )
+    embed.add_field(
+        name="🟢 Статус",
+        value="```Онлайн```",
+        inline=True
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="freenumbers", description="Показать свободные номера (админы)")
+@app_commands.default_permissions(administrator=True)
+async def freenumbers(interaction: discord.Interaction):
+    """Показывает свободные номера"""
+    all_numbers = set(range(CONFIG['min_number'], CONFIG['max_number'] + 1))
+    free_numbers = all_numbers - CONFIG['used_numbers']
+    
+    if not free_numbers:
+        await interaction.response.send_message("❌ Свободных номеров нет", ephemeral=True)
+        return
+    
+    free_numbers_list = sorted(list(free_numbers))
+    
+    embed = discord.Embed(
+        title="🎫 СВОБОДНЫЕ НОМЕРА",
+        color=0xff0000
+    )
+    
+    # Показываем первые 20 свободных номеров
+    display_numbers = [f"{num:03d}" for num in free_numbers_list[:20]]
+    embed.add_field(
+        name=f"Доступно: {len(free_numbers)}",
+        value=", ".join(display_numbers),
+        inline=False
+    )
+    
+    if len(free_numbers) > 20:
+        embed.add_field(
+            name="ℹ️ Показаны первые 20",
+            value=f"Всего свободно: {len(free_numbers)} номеров",
+            inline=False
+        )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="changenumber", description="Изменить номер игрока (админы)")
+@app_commands.default_permissions(administrator=True)
+async def changenumber(interaction: discord.Interaction, игрок: discord.Member, новый_номер: int):
+    """Изменяет номер игрока"""
+    if игрок.id not in CONFIG['registered_players']:
+        await interaction.response.send_message("❌ Игрок не зарегистрирован", ephemeral=True)
+        return
+    
+    if новый_номер < CONFIG['min_number'] or новый_номер > CONFIG['max_number']:
+        await interaction.response.send_message(
+            f"❌ Номер должен быть от {CONFIG['min_number']} до {CONFIG['max_number']}", 
+            ephemeral=True
+        )
+        return
+    
+    formatted_number = f"{новый_номер:03d}"
+    
+    # Удаляем старый номер
+    old_number = CONFIG['player_numbers'].get(игрок.id)
+    if old_number:
+        old_number_int = int(old_number)
+        if old_number_int in CONFIG['used_numbers']:
+            CONFIG['used_numbers'].remove(old_number_int)
+    
+    # Добавляем новый номер
+    CONFIG['used_numbers'].add(новый_номер)
+    CONFIG['player_numbers'][игрок.id] = formatted_number
+    
+    save_data()
+    
+    # Обновляем ник
+    try:
+        new_nickname = add_number_to_nick(игрок.display_name, formatted_number)
+        await игрок.edit(nick=new_nickname)
+    except discord.Forbidden:
+        pass
+    
+    embed = discord.Embed(
+        title="🔢 НОМЕР ИЗМЕНЕН",
+        description=f"Игроку {игрок.mention} установлен новый номер",
+        color=0xff0000
+    )
+    embed.add_field(
+        name="🎫 Новый номер",
+        value=f"```{formatted_number}```",
+        inline=True
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="broadcast", description="Сделать объявление для всех игроков (админы)")
+@app_commands.default_permissions(administrator=True)
+async def broadcast(interaction: discord.Interaction, сообщение: str):
+    """Отправляет сообщение всем зарегистрированным игрокам"""
+    if not CONFIG['registered_players']:
+        await interaction.response.send_message("❌ Нет игроков для рассылки", ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="📢 ОБЪЯВЛЕНИЕ",
+        description=сообщение,
+        color=0xff0000
+    )
+    embed.set_footer(text=f"От администратора • {interaction.user.display_name}")
+    
+    sent_count = 0
+    error_count = 0
+    
+    # Отправляем сообщение о начале рассылки
+    await interaction.response.send_message(
+        f"📤 Начинаю рассылку для {len(CONFIG['registered_players'])} игроков...", 
+        ephemeral=True
+    )
+    
+    for user_id in CONFIG['registered_players']:
+        try:
+            user = await bot.fetch_user(user_id)
+            await user.send(embed=embed)
+            sent_count += 1
+            await asyncio.sleep(0.5)  # Задержка чтобы не превысить лимиты Discord
+        except:
+            error_count += 1
+    
+    # Результат рассылки
+    result_embed = discord.Embed(
+        title="📊 РЕЗУЛЬТАТ РАССЫЛКИ",
+        color=0xff0000
+    )
+    result_embed.add_field(
+        name="✅ Успешно отправлено",
+        value=f"```{sent_count} игрокам```",
+        inline=True
+    )
+    result_embed.add_field(
+        name="❌ Ошибки",
+        value=f"```{error_count}```",
+        inline=True
+    )
+    
+    await interaction.followup.send(embed=result_embed, ephemeral=True)
+
+@bot.tree.command(name="players", description="Показать список участников")
+async def players(interaction: discord.Interaction):
+    """Показывает количество участников"""
+    total_players = len(CONFIG['registered_players'])
+    available_spots = CONFIG['max_players'] - total_players
+    
+    embed = discord.Embed(
+        title="👥 УЧАСТНИКИ",
+        color=0xff0000
+    )
+    embed.add_field(
+        name="🎯 Зарегистрировано",
+        value=f"```{total_players}/{CONFIG['max_players']} игроков```",
+        inline=True
+    )
+    embed.add_field(
+        name="🎫 Свободно мест",
+        value=f"```{available_spots}```",
+        inline=True
+    )
+    
+    if total_players > 0:
+        # Показываем только первые 10 игроков
+        players_list = []
+        count = 0
+        for user_id in list(CONFIG['registered_players'])[:10]:
+            user = bot.get_user(user_id)
+            player_number = CONFIG['player_numbers'].get(user_id, "???")
+            if user:
+                players_list.append(f"• {user.display_name} ({player_number})")
+                count += 1
+        
+        if players_list:
+            embed.add_field(
+                name=f"🎮 Игроки (первые {count})",
+                value="\n".join(players_list),
+                inline=False
+            )
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="mynumber", description="Показать ваш игровой номер")
+async def mynumber(interaction: discord.Interaction):
+    """Показывает номер игрока"""
+    if interaction.user.id not in CONFIG['registered_players']:
+        embed = discord.Embed(
+            title="❌ Не зарегистрирован",
+            description="Вы не зарегистрированы в игре",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    player_number = CONFIG['player_numbers'].get(interaction.user.id, "???")
+    embed = discord.Embed(
+        title="🎫 ВАШ НОМЕР",
+        description=f"**Ваш игровой номер:** `{player_number}`",
+        color=0xff0000
+    )
+    embed.add_field(
+        name="💡 Информация",
+        value="Этот номер будет вашим идентификатором во время события",
+        inline=False
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 @bot.tree.command(name="status", description="Проверить статус регистрации")
 async def status(interaction: discord.Interaction):
     """Команда для проверки статуса регистрации"""
@@ -812,3 +1079,4 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
