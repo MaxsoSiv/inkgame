@@ -3,3 +3,5 @@ game_data.json
 __pycache__/
 *.pyc
 *.log
+backups/
+*.backup.json
