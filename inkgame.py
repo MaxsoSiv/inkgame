@@ -8,8 +8,10 @@ import aiohttp
 import asyncio
 import json
 import logging
+import threading
 from typing import Optional, cast
 from dotenv import load_dotenv
+from flask import Flask
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -122,7 +124,7 @@ def remove_number_from_nick(nickname: Optional[str]) -> str:
     return ""
 
 def add_number_to_nick(nickname: Optional[str], number: str) -> str:
-    """Добавляет номер к нику в формате (123)"""
+    """Добавляет номер к нику в формаte (123)"""
     clean_nick = remove_number_from_nick(nickname)
     new_nick = f"{clean_nick} ({number})"
     return new_nick[:32]  # Ограничение Discord
@@ -780,6 +782,32 @@ async def sync(ctx):
             color=0xff0000
         )
         await ctx.send(embed=embed, ephemeral=True)
+
+# ==================== RENDER FIX ====================
+# Простой веб-сервер для Render (чтобы избежать ошибки портов)
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "🤖 Discord Bot is Online! | Status: ✅ Running"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+def run_flask():
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
+def keep_alive():
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    print(f"🌐 Flask server started for Render compatibility")
+
+# Запускаем Flask сервер
+keep_alive()
+# ==================== END RENDER FIX ====================
 
 # Запуск бота
 if __name__ == "__main__":
