@@ -708,11 +708,18 @@ async def status(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 async def restore(interaction: discord.Interaction):
     """Восстанавливает данные из файла"""
-    # Эта команда требует загрузки файла через Discord
-    await interaction.response.send_message(
-        "📁 Отправьте файл `game_backup.json` в следующем сообщении", 
-        ephemeral=True
+    embed = discord.Embed(
+        title="🔄 ВОССТАНОВЛЕНИЕ ДАННЫХ",
+        description="Для восстановления данных отправьте файл бэкапа в следующем сообщении\n\n**Поддерживаемые форматы:**\n- `backup_ДД.ММ.ГГГГ.json`\n- Любой .json файл с данными игры",
+        color=0xff0000
     )
+    embed.add_field(
+        name="⚠️ Внимание",
+        value="Текущие данные будут полностью заменены!",
+        inline=False
+    )
+    
+    await interaction.response.send_message(embed=embed)
     
     def check(message):
         return (message.author == interaction.user and 
@@ -721,60 +728,195 @@ async def restore(interaction: discord.Interaction):
                 message.attachments[0].filename.endswith('.json'))
     
     try:
-        msg = await bot.wait_for('message', timeout=60.0, check=check)
+        msg = await bot.wait_for('message', timeout=120.0, check=check)
         attachment = msg.attachments[0]
         
-        # Скачиваем и сохраняем файл
-        await attachment.save('game_data.json')
+        # Скачиваем файл
+        backup_filename = f"restore_{interaction.id}.json"
+        await attachment.save(backup_filename)
         
-        # Перезагружаем данные
-        if load_data():
-            embed = discord.Embed(
-                title="🔄 ДАННЫЕ ВОССТАНОВЛЕНЫ",
-                description=f"Успешно восстановлено {len(CONFIG['registered_players'])} игроков",
-                color=0x00ff00
-            )
-        else:
-            embed = discord.Embed(
-                title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
-                description="Не удалось загрузить данные из файла",
-                color=0xff0000
+        # Загружаем данные из файла
+        with open(backup_filename, 'r', encoding='utf-8') as f:
+            backup_data = json.load(f)
+        
+        # Восстанавливаем данные
+        CONFIG['used_numbers'] = set(backup_data['used_numbers'])
+        CONFIG['registered_players'] = set(backup_data['registered_players'])
+        CONFIG['player_numbers'] = backup_data['player_numbers']
+        CONFIG['registration_open'] = backup_data['registration_open']
+        CONFIG['game_active'] = backup_data['game_active']
+        
+        save_data()
+        
+        # Публичное сообщение о успешном восстановлении
+        embed = discord.Embed(
+            title="✅ ДАННЫЕ ВОССТАНОВЛЕНЫ",
+            description=f"Данные игры успешно восстановлены из резервной копии",
+            color=0x00ff00
+        )
+        embed.add_field(
+            name="📊 Восстановлено",
+            value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}```",
+            inline=True
+        )
+        embed.add_field(
+            name="👤 Восстановил",
+            value=f"```{interaction.user.display_name}```",
+            inline=True
+        )
+        embed.add_field(
+            name="📁 Файл",
+            value=f"```{attachment.filename}```",
+            inline=False
+        )
+        
+        if 'backup_created_at' in backup_data:
+            embed.add_field(
+                name="📅 Дата бэкапа",
+                value=f"```{backup_data['backup_created_at']}```",
+                inline=False
             )
         
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
+        
+        # Удаляем временный файл
+        import os
+        os.remove(backup_filename)
         
     except asyncio.TimeoutError:
-        await interaction.followup.send("❌ Время ожидания файла истекло", ephemeral=True)
+        embed = discord.Embed(
+            title="⏰ ВРЕМЯ ВЫШЛО",
+            description="Время ожидания файла истекло",
+            color=0xff0000
+        )
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
+            description=f"Не удалось восстановить данные: {str(e)}",
+            color=0xff0000
+        )
+        await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="backup_info", description="Информация о системе бэкапов")
+async def backup_info(interaction: discord.Interaction):
+    """Информация о системе резервного копирования"""
+    embed = discord.Embed(
+        title="💾 СИСТЕМА БЭКАПОВ",
+        color=0xff0000
+    )
+    
+    embed.add_field(
+        name="📊 Текущая статистика",
+        value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}\nСтатус: {'🟢 Активна' if CONFIG['game_active'] else '🔴 Неактивна'}```",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔄 Команды бэкапов",
+        value=(
+            "`/backup` - Создать резервную копию (админы)\n"
+            "`/restore` - Восстановить из бэкапа (админы)\n"
+            "`/backup_info` - Эта информация\n"
+            "`/save` - Быстрое сохранение (админы)"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💡 Рекомендации",
+        value=(
+            "• Делайте бэкапы перед обновлениями\n"
+            "• Храните несколько версий бэкапов\n"
+            "• Регулярно проверяйте целостность данных"
+        ),
+        inline=False
+    )
+    
+    if interaction.user.guild_permissions.administrator:
+        embed.add_field(
+            name="⚙️ Для администраторов",
+            value=(
+                "Бэкапы создаются в формате: `backup_ДД.ММ.ГГГГ.json`\n"
+                "Все данные автоматически сохраняются при изменениях"
+            ),
+            inline=False
+        )
+    
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="backup", description="Создать резервную копию данных (админы)")
 @app_commands.default_permissions(administrator=True)
 async def backup(interaction: discord.Interaction):
-    """Создает резервную копию данных"""
-    if save_data():
-        # Создаем файл для отправки
-        filename = f"backup_{interaction.id}.json"
-        with open('game_data.json', 'r', encoding='utf-8') as f:
-            backup_data = f.read()
-        
-        # Сохраняем временный файл
+    """Создает резервную копию данных для всех"""
+    if not CONFIG['registered_players']:
+        embed = discord.Embed(
+            title="💾 РЕЗЕРВНАЯ КОПИЯ",
+            description="Нет данных для резервного копирования",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Создаем файл с текущей датой
+    import datetime
+    current_date = datetime.datetime.now().strftime("%d.%m.%Y")
+    filename = f"backup_{current_date}.json"
+    
+    # Сохраняем данные в файл
+    backup_data = {
+        'used_numbers': list(CONFIG['used_numbers']),
+        'registered_players': list(CONFIG['registered_players']),
+        'player_numbers': CONFIG['player_numbers'],
+        'registration_open': CONFIG['registration_open'],
+        'game_active': CONFIG['game_active'],
+        'backup_created_at': str(datetime.datetime.now()),
+        'backup_created_by': f"{interaction.user.display_name} ({interaction.user.id})",
+        'total_players': len(CONFIG['registered_players'])
+    }
+    
+    try:
         with open(filename, 'w', encoding='utf-8') as f:
-            f.write(backup_data)
+            json.dump(backup_data, f, indent=2, ensure_ascii=False, default=str)
         
-        file = discord.File(filename, filename="game_backup.json")
-        
+        # Создаем информационное сообщение для всех
         embed = discord.Embed(
             title="💾 РЕЗЕРВНАЯ КОПИЯ СОЗДАНА",
-            description=f"Сохранено {len(CONFIG['registered_players'])} игроков",
+            description=f"Резервная копия данных игры успешно создана",
             color=0x00ff00
         )
+        embed.add_field(
+            name="📊 Статистика",
+            value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}\nДата: {current_date}```",
+            inline=True
+        )
+        embed.add_field(
+            name="👤 Создал",
+            value=f"```{interaction.user.display_name}```",
+            inline=True
+        )
+        embed.add_field(
+            name="📁 Файл",
+            value=f"```{filename}```",
+            inline=False
+        )
+        embed.set_footer(text="Резервная копия создана автоматически")
         
-        await interaction.response.send_message(embed=embed, file=file, ephemeral=True)
+        # Отправляем сообщение для всех и прикрепляем файл
+        file = discord.File(filename, filename=filename)
+        await interaction.response.send_message(embed=embed, file=file)
         
-        # Удаляем временный файл
+        # Удаляем временный файл после отправки
         import os
         os.remove(filename)
-    else:
-        await interaction.response.send_message("❌ Ошибка создания бэкапа", ephemeral=True)
+        
+    except Exception as e:
+        embed = discord.Embed(
+            title="❌ ОШИБКА СОЗДАНИЯ БЭКАПА",
+            description=f"Не удалось создать резервную копию: {str(e)}",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="reset", description="Сбросить регистрацию конкретного игрока (только для админов)")
 @app_commands.default_permissions(administrator=True)
@@ -1092,7 +1234,12 @@ async def save_cmd(interaction: discord.Interaction):
         embed.add_field(
             name="📊 Статистика",
             value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}```",
-            inline=False
+            inline=True
+        )
+        embed.add_field(
+            name="👤 Сохранил",
+            value=f"```{interaction.user.display_name}```",
+            inline=True
         )
     else:
         embed = discord.Embed(
@@ -1101,7 +1248,7 @@ async def save_cmd(interaction: discord.Interaction):
             color=0xff0000
         )
     
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(embed=embed)
 
 # Слеш-команда для загрузки данных (админы)
 @bot.tree.command(name="load", description="Принудительно загрузить данные игры (админы)")
@@ -1178,5 +1325,6 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
