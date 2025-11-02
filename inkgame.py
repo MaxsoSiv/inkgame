@@ -81,46 +81,96 @@ def save_data_with_backup():
 # Функции для сохранения и загрузки данных
 def save_data():
     """Сохраняет данные в файл"""
-    data = {
-        'used_numbers': list(CONFIG['used_numbers']),
-        'registered_players': list(CONFIG['registered_players']),
-        'player_numbers': {str(k): v for k, v in CONFIG['player_numbers'].items()},
-        'registration_open': CONFIG['registration_open'],
-        'game_active': CONFIG['game_active']
-    }
     try:
-        with open('game_data.json', 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        # Создаем копию данных для сохранения
+        save_data = {
+            'used_numbers': list(CONFIG['used_numbers']),
+            'registered_players': list(CONFIG['registered_players']),
+            'player_numbers': CONFIG['player_numbers'],
+            'registration_open': CONFIG['registration_open'],
+            'game_active': CONFIG['game_active'],
+            'saved_at': str(datetime.datetime.now()),
+            'version': '1.0'
+        }
+        
+        # Сначала сохраняем во временный файл
+        temp_filename = 'game_data_temp.json'
+        with open(temp_filename, 'w', encoding='utf-8') as f:
+            json.dump(save_data, f, indent=2, ensure_ascii=False)
+        
+        # Затем заменяем основной файл
+        if os.path.exists('game_data.json'):
+            os.replace(temp_filename, 'game_data.json')
+        else:
+            os.rename(temp_filename, 'game_data.json')
+            
         logger.info("✅ Данные сохранены")
         return True
+        
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения данных: {e}")
+        # Пытаемся удалить временный файл если он есть
+        try:
+            if os.path.exists('game_data_temp.json'):
+                os.remove('game_data_temp.json')
+        except:
+            pass
         return False
 
 def load_data():
     """Загружает данные из файла"""
     try:
+        if not os.path.exists('game_data.json'):
+            logger.info("ℹ️ Файл данных не найден, начинаем с чистого листа")
+            return True
+            
         with open('game_data.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        CONFIG['used_numbers'] = set(data['used_numbers'])
-        CONFIG['registered_players'] = set(data['registered_players'])
-        # Преобразуем строковые ключи обратно в целые числа
-        CONFIG['player_numbers'] = {int(k): v for k, v in data['player_numbers'].items()}
-        CONFIG['registration_open'] = data['registration_open']
-        CONFIG['game_active'] = data['game_active']
+        # Очищаем текущие данные
+        CONFIG['used_numbers'].clear()
+        CONFIG['registered_players'].clear()
+        CONFIG['player_numbers'].clear()
+        
+        # Загружаем used_numbers
+        if 'used_numbers' in data:
+            CONFIG['used_numbers'] = set(data['used_numbers'])
+        
+        # Загружаем registered_players
+        if 'registered_players' in data:
+            CONFIG['registered_players'] = set(data['registered_players'])
+        
+        # Загружаем player_numbers с преобразованием ключей
+        if 'player_numbers' in data:
+            CONFIG['player_numbers'] = {}
+            for user_id_str, number_str in data['player_numbers'].items():
+                try:
+                    user_id = int(user_id_str)
+                    CONFIG['player_numbers'][user_id] = number_str
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Неверный user_id в данных: {user_id_str}")
+                    continue
+        
+        # Загружаем флаги
+        if 'registration_open' in data:
+            CONFIG['registration_open'] = data['registration_open']
+        if 'game_active' in data:
+            CONFIG['game_active'] = data['game_active']
         
         logger.info("✅ Данные загружены")
         logger.info(f"📊 Загружено игроков: {len(CONFIG['registered_players'])}")
         logger.info(f"🔢 Использовано номеров: {len(CONFIG['used_numbers'])}")
         return True
-    except FileNotFoundError:
-        logger.info("ℹ️ Файл данных не найден, начинаем с чистого листа")
-        return True
+        
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки данных: {e}")
+        # В случае ошибки сбрасываем данные
+        CONFIG['used_numbers'].clear()
+        CONFIG['registered_players'].clear()
+        CONFIG['player_numbers'].clear()
+        CONFIG['registration_open'] = False
+        CONFIG['game_active'] = False
         return False
-
 @bot.event
 async def on_ready():
     logger.info(f'✅ Бот {bot.user} запущен!')
@@ -708,6 +758,9 @@ async def status(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 async def restore(interaction: discord.Interaction):
     """Восстанавливает данные из файла"""
+    # Сразу отправляем ответ, чтобы взаимодействие не истекло
+    await interaction.response.defer(ephemeral=False)
+    
     embed = discord.Embed(
         title="🔄 ВОССТАНОВЛЕНИЕ ДАННЫХ",
         description="Для восстановления данных отправьте файл бэкапа в следующем сообщении\n\n**Поддерживаемые форматы:**\n- `backup_ДД.ММ.ГГГГ.json`\n- Любой .json файл с данными игры",
@@ -719,84 +772,145 @@ async def restore(interaction: discord.Interaction):
         inline=False
     )
     
-    await interaction.response.send_message(embed=embed)
-    
+    instruction_msg = await interaction.followup.send(embed=embed)
+
     def check(message):
         return (message.author == interaction.user and 
                 message.channel == interaction.channel and
                 message.attachments and
                 message.attachments[0].filename.endswith('.json'))
-    
+
     try:
         msg = await bot.wait_for('message', timeout=120.0, check=check)
         attachment = msg.attachments[0]
         
+        # Уведомляем о начале обработки
+        processing_embed = discord.Embed(
+            title="⏳ ОБРАБОТКА ФАЙЛА",
+            description="Файл получен, начинаю обработку...",
+            color=0xff0000
+        )
+        await interaction.followup.send(embed=processing_embed)
+
         # Скачиваем файл
         backup_filename = f"restore_{interaction.id}.json"
         await attachment.save(backup_filename)
         
-        # Загружаем данные из файла
-        with open(backup_filename, 'r', encoding='utf-8') as f:
-            backup_data = json.load(f)
-        
-        # Восстанавливаем данные
-        CONFIG['used_numbers'] = set(backup_data['used_numbers'])
-        CONFIG['registered_players'] = set(backup_data['registered_players'])
-        CONFIG['player_numbers'] = backup_data['player_numbers']
-        CONFIG['registration_open'] = backup_data['registration_open']
-        CONFIG['game_active'] = backup_data['game_active']
-        
-        save_data()
+        # Загружаем данные из файла с обработкой ошибок
+        try:
+            with open(backup_filename, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+        except Exception as e:
+            error_embed = discord.Embed(
+                title="❌ ОШИБКА ФАЙЛА",
+                description=f"Не удалось прочитать файл: {str(e)}",
+                color=0xff0000
+            )
+            await interaction.followup.send(embed=error_embed)
+            return
+
+        # Восстанавливаем данные с проверкой структуры
+        try:
+            # Очищаем текущие данные
+            CONFIG['used_numbers'].clear()
+            CONFIG['registered_players'].clear()
+            CONFIG['player_numbers'].clear()
+            
+            # Восстанавливаем used_numbers
+            if 'used_numbers' in backup_data:
+                CONFIG['used_numbers'] = set(backup_data['used_numbers'])
+            else:
+                # Если старого формата, создаем из player_numbers
+                for user_id, number_str in backup_data.get('player_numbers', {}).items():
+                    try:
+                        number_int = int(number_str)
+                        CONFIG['used_numbers'].add(number_int)
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Восстанавливаем registered_players
+            if 'registered_players' in backup_data:
+                CONFIG['registered_players'] = set(backup_data['registered_players'])
+            else:
+                # Если старого формата, создаем из ключей player_numbers
+                CONFIG['registered_players'] = set(backup_data.get('player_numbers', {}).keys())
+            
+            # Восстанавливаем player_numbers с преобразованием ключей
+            if 'player_numbers' in backup_data:
+                CONFIG['player_numbers'] = {}
+                for user_id_str, number_str in backup_data['player_numbers'].items():
+                    try:
+                        user_id = int(user_id_str)
+                        CONFIG['player_numbers'][user_id] = number_str
+                    except (ValueError, TypeError):
+                        continue
+            
+            # Восстанавливаем флаги
+            CONFIG['registration_open'] = backup_data.get('registration_open', False)
+            CONFIG['game_active'] = backup_data.get('game_active', False)
+            
+            # Сохраняем данные
+            save_data()
+            
+        except Exception as e:
+            error_embed = discord.Embed(
+                title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
+                description=f"Не удалось восстановить структуру данных: {str(e)}",
+                color=0xff0000
+            )
+            await interaction.followup.send(embed=error_embed)
+            return
         
         # Публичное сообщение о успешном восстановлении
-        embed = discord.Embed(
+        success_embed = discord.Embed(
             title="✅ ДАННЫЕ ВОССТАНОВЛЕНЫ",
             description=f"Данные игры успешно восстановлены из резервной копии",
             color=0x00ff00
         )
-        embed.add_field(
+        success_embed.add_field(
             name="📊 Восстановлено",
             value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}```",
             inline=True
         )
-        embed.add_field(
+        success_embed.add_field(
             name="👤 Восстановил",
             value=f"```{interaction.user.display_name}```",
             inline=True
         )
-        embed.add_field(
+        success_embed.add_field(
             name="📁 Файл",
             value=f"```{attachment.filename}```",
             inline=False
         )
         
         if 'backup_created_at' in backup_data:
-            embed.add_field(
+            success_embed.add_field(
                 name="📅 Дата бэкапа",
                 value=f"```{backup_data['backup_created_at']}```",
                 inline=False
             )
         
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=success_embed)
         
         # Удаляем временный файл
         import os
-        os.remove(backup_filename)
+        if os.path.exists(backup_filename):
+            os.remove(backup_filename)
         
     except asyncio.TimeoutError:
-        embed = discord.Embed(
+        timeout_embed = discord.Embed(
             title="⏰ ВРЕМЯ ВЫШЛО",
             description="Время ожидания файла истекло",
             color=0xff0000
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=timeout_embed)
     except Exception as e:
-        embed = discord.Embed(
-            title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
-            description=f"Не удалось восстановить данные: {str(e)}",
+        error_embed = discord.Embed(
+            title="❌ ОШИБКА",
+            description=f"Произошла непредвиденная ошибка: {str(e)}",
             color=0xff0000
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=error_embed)
 
 @bot.tree.command(name="backup_info", description="Информация о системе бэкапов")
 async def backup_info(interaction: discord.Interaction):
@@ -1325,6 +1439,7 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
