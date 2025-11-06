@@ -44,13 +44,13 @@ CONFIG = {
     'leaderboard_channel_id': None
 }
 
-# Доступные титулы и их цвета
+# Доступные титулы (цвета убраны)
 AVAILABLE_TITLES = {
-    "EchoFan": 0x800080,  # Фиолетовый
-    "Legend": 0x00FFFF,    # Голубой
-    "Rich": 0xFFD700,      # Золотистый
-    "mastermind": 0xFFFFFF, # Белый
-    "Контент Креэйтор": 0xFF0000  # Красный
+    "EchoFan": 0x800080,
+    "Legend": 0x00FFFF,
+    "Rich": 0xFFD700,
+    "mastermind": 0xFFFFFF,
+    "Контент Креэйтор": 0xFF0000
 }
 
 # Цены титулов
@@ -59,7 +59,7 @@ TITLE_PRICES = {
     "Legend": 10000,
     "Rich": 15000,
     "mastermind": 20000,
-    "Контент Креэйтор": 0  # Бесплатный, только через админов
+    "Контент Креэйтор": 0
 }
 
 # Токены из переменных окружения
@@ -78,19 +78,15 @@ if not UNBELIEVABOAT_TOKEN:
 def save_data_with_backup():
     """Сохраняет данные и создает резервную копию"""
     if save_data():
-        # Создаем резервную копию с timestamp
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_filename = f"backups/game_data_backup_{timestamp}.json"
         
-        # Создаем папку backups если нет
         if not os.path.exists('backups'):
             os.makedirs('backups')
         
-        # Копируем файл
         import shutil
         shutil.copy2('game_data.json', backup_filename)
         
-        # Удаляем старые бэкапы (оставляем последние 5)
         backup_files = sorted([f for f in os.listdir('backups') if f.startswith('game_data_backup_')])
         if len(backup_files) > 5:
             for old_backup in backup_files[:-5]:
@@ -99,11 +95,9 @@ def save_data_with_backup():
         return True
     return False
 
-# Функции для сохранения и загрузки данных
 def save_data():
     """Сохраняет данные в файл"""
     try:
-        # Создаем копию данных для сохранения
         save_data = {
             'used_numbers': list(CONFIG['used_numbers']),
             'registered_players': list(CONFIG['registered_players']),
@@ -118,12 +112,10 @@ def save_data():
             'version': '1.2'
         }
         
-        # Сначала сохраняем во временный файл
         temp_filename = 'game_data_temp.json'
         with open(temp_filename, 'w', encoding='utf-8') as f:
             json.dump(save_data, f, indent=2, ensure_ascii=False)
         
-        # Затем заменяем основной файл
         if os.path.exists('game_data.json'):
             os.replace(temp_filename, 'game_data.json')
         else:
@@ -134,7 +126,6 @@ def save_data():
         
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения данных: {e}")
-        # Пытаемся удалить временный файл если он есть
         try:
             if os.path.exists('game_data_temp.json'):
                 os.remove('game_data_temp.json')
@@ -152,22 +143,18 @@ def load_data():
         with open('game_data.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # Очищаем текущие данные
         CONFIG['used_numbers'].clear()
         CONFIG['registered_players'].clear()
         CONFIG['player_numbers'].clear()
         CONFIG['player_titles'].clear()
         CONFIG['registration_order'].clear()
         
-        # Загружаем used_numbers
         if 'used_numbers' in data:
             CONFIG['used_numbers'] = set(data['used_numbers'])
         
-        # Загружаем registered_players
         if 'registered_players' in data:
             CONFIG['registered_players'] = set(data['registered_players'])
         
-        # Загружаем player_numbers с преобразованием ключей
         if 'player_numbers' in data:
             CONFIG['player_numbers'] = {}
             for user_id_str, number_str in data['player_numbers'].items():
@@ -178,38 +165,32 @@ def load_data():
                     logger.warning(f"⚠️ Неверный user_id в данных: {user_id_str}")
                     continue
         
-        # Загружаем player_titles с преобразованием старого формата
         if 'player_titles' in data:
             CONFIG['player_titles'] = {}
             for user_id_str, title_data in data['player_titles'].items():
                 try:
                     user_id = int(user_id_str)
-                    # Если старый формат (просто строка), преобразуем в новый
                     if isinstance(title_data, str):
                         CONFIG['player_titles'][user_id] = {
                             'owned': [title_data],
                             'equipped': title_data
                         }
                     else:
-                        # Новый формат
                         CONFIG['player_titles'][user_id] = title_data
                 except (ValueError, TypeError):
                     logger.warning(f"⚠️ Неверный user_id в данных титулов: {user_id_str}")
                     continue
         
-        # Загружаем registration_order
         if 'registration_order' in data:
             CONFIG['registration_order'] = data['registration_order']
         else:
             CONFIG['registration_order'] = list(CONFIG['registered_players'])
         
-        # Загружаем лидерборд
         if 'leaderboard_message_id' in data:
             CONFIG['leaderboard_message_id'] = data['leaderboard_message_id']
         if 'leaderboard_channel_id' in data:
             CONFIG['leaderboard_channel_id'] = data['leaderboard_channel_id']
         
-        # Загружаем флаги
         if 'registration_open' in data:
             CONFIG['registration_open'] = data['registration_open']
         if 'game_active' in data:
@@ -223,7 +204,6 @@ def load_data():
         
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки данных: {e}")
-        # В случае ошибки сбрасываем данные
         CONFIG['used_numbers'].clear()
         CONFIG['registered_players'].clear()
         CONFIG['player_numbers'].clear()
@@ -234,18 +214,17 @@ def load_data():
         CONFIG['registration_open'] = False
         CONFIG['game_active'] = False
         return False
+
 @bot.event
 async def on_ready():
     logger.info(f'✅ Бот {bot.user} запущен!')
     logger.info(f'🆔 ID бота: {bot.user.id}')
     
-    # Загружаем данные при запуске
     load_data()
     
     logger.info(f'📊 Статус регистрации: {"Открыта" if CONFIG["registration_open"] else "Закрыта"}')
     logger.info(f'🎫 Свободных мест: {CONFIG["max_players"] - len(CONFIG["registered_players"])}')
     
-    # Синхронизация команд с задержкой
     await asyncio.sleep(2)
     
     try:
@@ -266,7 +245,7 @@ def add_number_to_nick(nickname: Optional[str], number: str) -> str:
     """Добавляет номер к нику в формате (123)"""
     clean_nick = remove_number_from_nick(nickname)
     new_nick = f"{clean_nick} ({number})"
-    return new_nick[:32]  # Ограничение Discord
+    return new_nick[:32]
 
 async def add_money_to_user(guild_id: int, user_id: int, amount: int):
     """Добавляет деньги пользователю через UnbelievaBoat"""
@@ -338,7 +317,6 @@ async def create_leaderboard_embed(page: int = 1):
             color=0xff0000
         )
     
-    # Проверяем валидность страницы
     total_pages = (len(CONFIG['registration_order']) + 9) // 10
     if page < 1 or page > total_pages:
         page = 1
@@ -349,7 +327,6 @@ async def create_leaderboard_embed(page: int = 1):
         color=0xff0000
     )
     
-    # Вычисляем диапазон игроков для текущей страницы
     start_index = (page - 1) * 10
     end_index = min(start_index + 10, len(CONFIG['registration_order']))
     
@@ -361,17 +338,13 @@ async def create_leaderboard_embed(page: int = 1):
         player_number = CONFIG['player_numbers'].get(user_id, "???")
         
         if user:
-            # Получаем надетый титул игрока
             equipped_title = None
             if user_id in CONFIG['player_titles']:
                 equipped_title = CONFIG['player_titles'][user_id].get('equipped')
             
+            # ИЗМЕНЕНИЕ: титул после ника
             if equipped_title:
-                # Создаем цветной текст для титула
-                title_color = AVAILABLE_TITLES.get(equipped_title, 0xff0000)
-                # Используем кодовые блоки с CSS-подобным синтаксисом для цвета (это не сработает в Discord)
-                # Вместо этого используем emoji или просто текст
-                leaderboard_text += f"`#{i+1:2d}` **{equipped_title}** {user.display_name} ({player_number})\n"
+                leaderboard_text += f"`#{i+1:2d}` {user.display_name} **[{equipped_title}]** ({player_number})\n"
             else:
                 leaderboard_text += f"`#{i+1:2d}` {user.display_name} ({player_number})\n"
         else:
@@ -388,16 +361,12 @@ async def create_leaderboard_embed(page: int = 1):
     
     return embed
 
-# ==================== УЛУЧШЕННАЯ ОБРАБОТКА КОМАНД ====================
-
 async def safe_send_response(interaction, *args, **kwargs):
     """Безопасная отправка ответа с обработкой ошибок взаимодействий"""
     try:
-        # Если взаимодействие еще не обработано
         if not interaction.response.is_done():
             await interaction.response.send_message(*args, **kwargs)
         else:
-            # Если уже обработано, используем followup
             await interaction.followup.send(*args, **kwargs)
         return True
     except discord.errors.NotFound:
@@ -428,6 +397,15 @@ async def safe_defer_response(interaction, *args, **kwargs):
         logger.error(f"❌ Ошибка при откладывании ответа: {e}")
         return False
 
+# ==================== АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ====================
+
+async def auto_update_leaderboard():
+    """Автоматически обновляет лидерборд с обработкой ошибок"""
+    try:
+        await update_leaderboard()
+    except Exception as e:
+        logger.error(f"❌ Ошибка автоматического обновления лидерборда: {e}")
+
 # ==================== КОМАНДЫ ТИТУЛОВ ====================
 
 @bot.tree.command(name="titles", description="Магазин титулов")
@@ -436,7 +414,6 @@ async def titles(interaction: discord.Interaction):
     try:
         await safe_defer_response(interaction, ephemeral=False, thinking=True)
         
-        # Получаем купленные титулы пользователя
         user_titles = CONFIG['player_titles'].get(interaction.user.id, {'owned': [], 'equipped': None})
         owned_titles = user_titles['owned']
         
@@ -450,12 +427,12 @@ async def titles(interaction: discord.Interaction):
             price = TITLE_PRICES[title]
             price_text = "🎁 Бесплатно (выдается админами)" if price == 0 else f"💵 {price:,}$"
             
-            # Проверяем, куплен ли титул
             status = "✅ Куплен" if title in owned_titles else "🛒 Доступен"
             
+            # ИЗМЕНЕНИЕ: убрано упоминание цвета
             embed.add_field(
                 name=f"**{title}** - {status}",
-                value=f"Цвет: {color}\nЦена: {price_text}",
+                value=f"Цена: {price_text}",
                 inline=True
             )
         
@@ -514,22 +491,22 @@ async def equip(interaction: discord.Interaction, название_титула:
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Надеваем титул
         user_titles['equipped'] = название_титула
         save_data()
         
-        # Обновляем лидерборд
-        await update_leaderboard()
+        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
+        await auto_update_leaderboard()
         
+        # ИЗМЕНЕНИЕ: убрано упоминание цвета
         embed = discord.Embed(
             title="👑 ТИТУЛ НАДЕТ",
             description=f"Вы надели титул **{название_титула}**!",
-            color=AVAILABLE_TITLES.get(название_титула, 0xff0000)
+            color=0xff0000  # Стандартный цвет вместо цвета титула
         )
         
         embed.add_field(
             name="👀 Просмотр",
-            value="Теперь ваш титул отображается в `/leaderboard`",
+            value="Теперь ваш титул отображается в лидерборде",
             inline=False
         )
         
@@ -566,7 +543,6 @@ async def inv(interaction: discord.Interaction):
             color=0xff0000
         )
         
-        # Показываем надетый титул
         if equipped_title:
             embed.add_field(
                 name="👑 Надетый титул",
@@ -580,7 +556,6 @@ async def inv(interaction: discord.Interaction):
                 inline=False
             )
         
-        # Показываем все титулы
         titles_text = ""
         for title in owned_titles:
             status = "👑" if title == equipped_title else "✅"
@@ -627,13 +602,12 @@ async def unequip(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Снимаем титул
         old_title = CONFIG['player_titles'][user_id]['equipped']
         CONFIG['player_titles'][user_id]['equipped'] = None
         save_data()
         
-        # Обновляем лидерборд
-        await update_leaderboard()
+        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
+        await auto_update_leaderboard()
         
         embed = discord.Embed(
             title="❌ ТИТУЛ СНЯТ",
@@ -663,7 +637,6 @@ async def buy(interaction: discord.Interaction, название_титула: s
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
         
-        # Проверяем существование титула
         if название_титула not in AVAILABLE_TITLES:
             embed = discord.Embed(
                 title="❌ Ошибка",
@@ -673,14 +646,12 @@ async def buy(interaction: discord.Interaction, название_титула: s
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Получаем текущие титулы пользователя
         user_id = interaction.user.id
         if user_id not in CONFIG['player_titles']:
             CONFIG['player_titles'][user_id] = {'owned': [], 'equipped': None}
         
         user_titles = CONFIG['player_titles'][user_id]
         
-        # Проверяем, не куплен ли уже титул
         if название_титула in user_titles['owned']:
             embed = discord.Embed(
                 title="❌ Ошибка",
@@ -692,7 +663,6 @@ async def buy(interaction: discord.Interaction, название_титула: s
         
         price = TITLE_PRICES[название_титула]
         
-        # Проверяем баланс
         success, balance_data = await get_user_balance(interaction.guild.id, user_id)
         
         if not success:
@@ -715,7 +685,6 @@ async def buy(interaction: discord.Interaction, название_титула: s
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Списываем деньги (если титул не бесплатный)
         if price > 0:
             success, message = await add_money_to_user(interaction.guild.id, user_id, -price)
             if not success:
@@ -727,23 +696,21 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 await safe_edit_response(interaction, embed=embed)
                 return
         
-        # Добавляем титул в инвентарь
         user_titles['owned'].append(название_титула)
         
-        # Если это первый титул, автоматически надеваем его
         if user_titles['equipped'] is None:
             user_titles['equipped'] = название_титула
         
         save_data()
         
-        # Обновляем лидерборд
-        await update_leaderboard()
+        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
+        await auto_update_leaderboard()
         
-        # Сообщение об успехе
+        # ИЗМЕНЕНИЕ: убрано упоминание цвета
         embed = discord.Embed(
             title="✅ ТИТУЛ ПРИОБРЕТЕН",
             description=f"Вы успешно приобрели титул **{название_титула}**!",
-            color=AVAILABLE_TITLES[название_титула]
+            color=0xff0000  # Стандартный цвет вместо цвета титула
         )
         
         if price > 0:
@@ -753,11 +720,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 inline=True
             )
         
-        embed.add_field(
-            name="🎨 Цвет",
-            value=f"```{AVAILABLE_TITLES[название_титула]}```",
-            inline=True
-        )
+        # ИЗМЕНЕНИЕ: убрано поле с цветом
         
         if user_titles['equipped'] == название_титула:
             embed.add_field(
@@ -774,7 +737,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
         
         embed.add_field(
             name="👀 Просмотр",
-            value="Ваш титул теперь отображается в `/leaderboard`",
+            value="Ваш титул теперь отображается в лидерборде",
             inline=False
         )
         
@@ -812,38 +775,32 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
         
         user_id = игрок.id
         
-        # Создаем запись если нет
         if user_id not in CONFIG['player_titles']:
             CONFIG['player_titles'][user_id] = {'owned': [], 'equipped': None}
         
         user_titles = CONFIG['player_titles'][user_id]
         
-        # Добавляем титул если его нет
         if "Контент Креэйтор" not in user_titles['owned']:
             user_titles['owned'].append("Контент Креэйтор")
         
-        # Надеваем титул
         user_titles['equipped'] = "Контент Креэйтор"
         save_data()
         
-        # Обновляем лидерборд
-        await update_leaderboard()
+        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
+        await auto_update_leaderboard()
         
+        # ИЗМЕНЕНИЕ: убрано упоминание цвета
         embed = discord.Embed(
             title="🎁 ТИТУЛ ВЫДАН",
             description=f"Игрок {игрок.mention} получил титул **Контент Креэйтор**!",
-            color=0xFF0000  # Красный цвет для этого титула
+            color=0xff0000
         )
         
-        embed.add_field(
-            name="🎨 Цвет титула",
-            value="```Красный```",
-            inline=True
-        )
+        # ИЗМЕНЕНИЕ: убрано поле с цветом титула
         
         embed.add_field(
             name="👀 Просмотр",
-            value="Титул отображается в `/leaderboard`",
+            value="Титул отображается в лидерборде",
             inline=True
         )
         
@@ -855,8 +812,6 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
         logger.error(f"❌ Ошибка в команде cc: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при выдаче титула", ephemeral=True)
 
-
-
 @bot.tree.command(name="set_leaderboard", description="Установить сообщение лидерборда (админы)")
 @app_commands.default_permissions(administrator=True)
 async def set_leaderboard(interaction: discord.Interaction):
@@ -864,11 +819,9 @@ async def set_leaderboard(interaction: discord.Interaction):
     try:
         await safe_defer_response(interaction, ephemeral=True, thinking=True)
         
-        # Создаем лидерборд
         embed = await create_leaderboard_embed()
         message = await interaction.channel.send(embed=embed)
         
-        # Сохраняем ID сообщения и канала
         CONFIG['leaderboard_message_id'] = message.id
         CONFIG['leaderboard_channel_id'] = interaction.channel.id
         save_data()
@@ -881,7 +834,7 @@ async def set_leaderboard(interaction: discord.Interaction):
         
         embed.add_field(
             name="📊 Автообновление",
-            value="Лидерборд будет автоматически обновляться при:\n• Регистрации новых игроков\n• Покупке титулов\n• Смене титулов",
+            value="Лидерборд будет автоматически обновляться при:\n• Регистрации новых игроков\n• Покупке титулов\n• Смене титулов\n• Снятии титулов\n• Выдаче титулов админами",
             inline=False
         )
         
@@ -930,23 +883,18 @@ async def mytitle(interaction: discord.Interaction):
             return
         
         equipped_title = CONFIG['player_titles'][user_id]['equipped']
-        color = AVAILABLE_TITLES.get(equipped_title, 0xff0000)
         
         embed = discord.Embed(
             title="🏆 ВАШ ТИТУЛ",
             description=f"**{equipped_title}**",
-            color=color
+            color=0xff0000  # Стандартный цвет вместо цвета титула
         )
         
-        embed.add_field(
-            name="🎨 Цвет",
-            value=f"```{color}```",
-            inline=True
-        )
+        # ИЗМЕНЕНИЕ: убрано поле с цветом
         
         embed.add_field(
             name="👀 Просмотр",
-            value="Ваш титул отображается в `/leaderboard`",
+            value="Ваш титул отображается в лидерборде",
             inline=True
         )
         
@@ -988,7 +936,6 @@ async def start(interaction: discord.Interaction):
         CONFIG['registration_open'] = True
         CONFIG['game_active'] = True
         
-        # Сохраняем изменения
         save_data()
         
         embed = discord.Embed(
@@ -1029,7 +976,6 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
         
-        # Проверка открыта ли регистрации
         if not CONFIG['registration_open']:
             embed = discord.Embed(
                 title="🚫 Регистрация закрыта",
@@ -1040,7 +986,6 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Проверка на лимит регистраций
         if len(CONFIG['registered_players']) >= CONFIG['max_players']:
             embed = discord.Embed(
                 title="🎯 Все места заняты",
@@ -1051,7 +996,6 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Проверка, не зарегистрирован ли уже игрок
         if interaction.user.id in CONFIG['registered_players']:
             embed = discord.Embed(
                 title="⚠️ Уже зарегистрирован",
@@ -1062,7 +1006,6 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Генерация уникального номера
         if len(CONFIG['used_numbers']) >= (CONFIG['max_number'] - CONFIG['min_number'] + 1):
             embed = discord.Embed(
                 title="❌ Ошибка системы",
@@ -1079,27 +1022,21 @@ async def reg(interaction: discord.Interaction):
                 CONFIG['used_numbers'].add(player_number)
                 break
         
-        # Форматирование номера с ведущими нулями
         formatted_number = f"{player_number:03d}"
         
-        # Добавление игрока в зарегистрированные
         CONFIG['registered_players'].add(interaction.user.id)
         CONFIG['player_numbers'][interaction.user.id] = formatted_number
-        # ДОБАВЛЯЕМ В ПОРЯДОК РЕГИСТРАЦИИ
         if interaction.user.id not in CONFIG['registration_order']:
             CONFIG['registration_order'].append(interaction.user.id)
         
-        # Сохраняем изменения
         save_data()
         
-        # Обновляем лидерборд
-        await update_leaderboard()
+        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ РЕГИСТРАЦИИ
+        await auto_update_leaderboard()
         
-        # Поиск роли
         registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
         
         if not registration_role:
-            # Создание роли, если она не существует
             try:
                 registration_role = await interaction.guild.create_role(
                     name=CONFIG['registration_role_name'],
@@ -1115,7 +1052,6 @@ async def reg(interaction: discord.Interaction):
                 await safe_edit_response(interaction, embed=embed)
                 return
         
-        # Выдача роли игроку - приводим к Member для доступа к add_roles
         member = cast(discord.Member, interaction.user)
         try:
             await member.add_roles(registration_role)
@@ -1128,14 +1064,12 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
-        # Изменение ника игрока
         try:
             new_nickname = add_number_to_nick(member.display_name, formatted_number)
             await member.edit(nick=new_nickname)
         except discord.Forbidden:
-            pass  # Нет прав на изменение ника
+            pass
         
-        # Сообщение о регистрации
         embed = discord.Embed(
             title="✅ РЕГИСТРАЦИЯ УСПЕШНА",
             description=(
@@ -1782,6 +1716,9 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
         
         # Сохраняем изменения
         save_data()
+        
+        # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ УДАЛЕНИИ ИГРОКА
+        await auto_update_leaderboard()
         
         # Убираем роль
         registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
