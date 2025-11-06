@@ -77,12 +77,10 @@ def save_data_with_backup():
     """Сохраняет данные и создает резервную копию"""
     if save_data():
         # Создаем резервную копию с timestamp
-        import datetime
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_filename = f"backups/game_data_backup_{timestamp}.json"
         
         # Создаем папку backups если нет
-        import os
         if not os.path.exists('backups'):
             os.makedirs('backups')
         
@@ -293,12 +291,55 @@ async def get_user_balance(guild_id: int, user_id: int):
     except Exception as e:
         return False, f"Ошибка соединения: {e}"
 
-# ==================== НОВЫЕ КОМАНДЫ ====================
+# ==================== УЛУЧШЕННАЯ ОБРАБОТКА КОМАНД ====================
+
+async def safe_send_response(interaction, *args, **kwargs):
+    """Безопасная отправка ответа с обработкой ошибок взаимодействий"""
+    try:
+        # Если взаимодействие еще не обработано
+        if not interaction.response.is_done():
+            await interaction.response.send_message(*args, **kwargs)
+        else:
+            # Если уже обработано, используем followup
+            await interaction.followup.send(*args, **kwargs)
+        return True
+    except discord.errors.NotFound:
+        logger.warning("⚠️ Взаимодействие не найдено (возможно истекло время)")
+        return False
+    except discord.errors.HTTPException as e:
+        logger.error(f"❌ Ошибка HTTP при отправке ответа: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"❌ Неизвестная ошибка при отправке ответа: {e}")
+        return False
+
+async def safe_edit_response(interaction, *args, **kwargs):
+    """Безопасное редактирование ответа"""
+    try:
+        await interaction.edit_original_response(*args, **kwargs)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка при редактировании ответа: {e}")
+        return False
+
+async def safe_defer_response(interaction, *args, **kwargs):
+    """Безопасное откладывание ответа"""
+    try:
+        await interaction.response.defer(*args, **kwargs)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка при откладывании ответа: {e}")
+        return False
+
+# ==================== КОМАНДЫ ТИТУЛОВ ====================
 
 @bot.tree.command(name="titles", description="Магазин титулов")
 async def titles(interaction: discord.Interaction):
     """Показывает доступные титулы для покупки"""
     try:
+        # Немедленно отвечаем на взаимодействие
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
         embed = discord.Embed(
             title="🏆 МАГАЗИН ТИТУЛОВ",
             description="Приобретите уникальный титул для отображения в лидерборде!",
@@ -330,28 +371,21 @@ async def titles(interaction: discord.Interaction):
         embed.set_footer(text="Магазин титулов • Ink Game")
         embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
         
-        # Используем followup если interaction уже обработан
-        try:
-            await interaction.response.send_message(embed=embed)
-        except discord.errors.NotFound:
-            await interaction.followup.send(embed=embed)
-            
+        await safe_edit_response(interaction, embed=embed)
+        
     except Exception as e:
         logger.error(f"❌ Ошибка в команде titles: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при выполнении команды", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при выполнении команды", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при выполнении команды", ephemeral=True)
 
 @bot.tree.command(name="buy", description="Купить титул")
 async def buy(interaction: discord.Interaction, название_титула: str):
     """Покупка титула"""
     try:
-        if not interaction.guild:
-            await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
-            return
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
         
-        # УБИРАЕМ ПРОВЕРКУ НА РЕГИСТРАЦИЮ - теперь титулы могут покупать все
+        if not interaction.guild:
+            await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
+            return
         
         # Проверяем существование титула
         if название_титула not in AVAILABLE_TITLES:
@@ -360,7 +394,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 description="Такого титула не существует. Используйте `/titles` для просмотра доступных титулов.",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Проверяем, не куплен ли уже титул
@@ -370,7 +404,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 description="У вас уже есть этот титул!",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         price = TITLE_PRICES[название_титула]
@@ -384,7 +418,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 description=f"Не удалось проверить баланс: {balance_data}",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         total_balance = balance_data.get('cash', 0) + balance_data.get('bank', 0)
@@ -395,7 +429,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 description=f"У вас {total_balance:,}$, а нужно {price:,}$",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Списываем деньги (если титул не бесплатный)
@@ -407,7 +441,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
                     description=f"Не удалось списать средства: {message}",
                     color=0xff0000
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await safe_edit_response(interaction, embed=embed)
                 return
         
         # Выдаем титул
@@ -442,26 +476,25 @@ async def buy(interaction: discord.Interaction, название_титула: s
         
         embed.set_footer(text="Магазин титулов • Ink Game")
         
-        await interaction.response.send_message(embed=embed)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде buy: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при покупке титула", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при покупке титула", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при покупке титула", ephemeral=True)
 
 @bot.tree.command(name="leaderboard", description="Таблица лидеров по порядку регистрации")
 async def leaderboard(interaction: discord.Interaction, страница: int = 1):
     """Показывает таблицу лидеров"""
     try:
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
         if not CONFIG['registration_order']:
             embed = discord.Embed(
                 title="📊 ЛИДЕРБОРД",
                 description="Пока нет зарегистрированных игроков",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Проверяем валидность страницы
@@ -472,7 +505,7 @@ async def leaderboard(interaction: discord.Interaction, страница: int = 
                 description=f"Доступны страницы от 1 до {total_pages}",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         embed = discord.Embed(
@@ -510,22 +543,21 @@ async def leaderboard(interaction: discord.Interaction, страница: int = 
         embed.set_footer(text=f"Страница {страница}/{total_pages} • Лидерборд • Ink Game")
         embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
         
-        await interaction.response.send_message(embed=embed)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде leaderboard: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе лидерборда", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе лидерборда", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе лидерборда", ephemeral=True)
 
 @bot.tree.command(name="cc", description="Выдать титул 'Контент Креэйтор' (админы)")
 @app_commands.default_permissions(administrator=True)
 async def cc(interaction: discord.Interaction, игрок: discord.Member):
     """Выдает специальный титул Контент Креэйтор"""
     try:
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
         if not interaction.guild:
-            await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+            await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
         
         # Выдаем титул (теперь можно выдавать даже незарегистрированным)
@@ -552,26 +584,25 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
         
         embed.set_footer(text="Специальный титул • Ink Game")
         
-        await interaction.response.send_message(embed=embed)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде cc: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при выдаче титула", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при выдаче титула", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при выдаче титула", ephemeral=True)
 
 @bot.tree.command(name="mytitle", description="Показать ваш текущий титул")
 async def mytitle(interaction: discord.Interaction):
     """Показывает текущий титул игрока"""
     try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
         if interaction.user.id not in CONFIG['player_titles']:
             embed = discord.Embed(
                 title="🏆 ВАШ ТИТУЛ",
                 description="У вас пока нет титула. Используйте `/titles` для просмотра доступных титулов.",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         title = CONFIG['player_titles'][interaction.user.id]
@@ -595,25 +626,23 @@ async def mytitle(interaction: discord.Interaction):
             inline=True
         )
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде mytitle: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе титула", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе титула", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе титула", ephemeral=True)
 
-# ==================== СУЩЕСТВУЮЩИЕ КОМАНДЫ ====================
+# ==================== ОСНОВНЫЕ КОМАНДЫ ====================
 
-# Слеш-команда открытия регистрации (только для админов)
 @bot.tree.command(name="start", description="Открыть регистрацию для всех игроков (только для админов)")
 @app_commands.default_permissions(administrator=True)
 async def start(interaction: discord.Interaction):
     """Открытие регистрации"""
     try:
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
         if not interaction.guild:
-            await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+            await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
             
         if CONFIG['registration_open']:
@@ -623,7 +652,7 @@ async def start(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         CONFIG['registration_open'] = True
@@ -654,22 +683,20 @@ async def start(interaction: discord.Interaction):
         )
         embed.set_footer(text="Система регистрации • Ink Game")
         embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-        await interaction.response.send_message(embed=embed)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде start: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при открытии регистрации", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при открытии регистрации", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при открытии регистрации", ephemeral=True)
 
-# Слеш-команда регистрации
 @bot.tree.command(name="reg", description="Зарегистрироваться в игре")
 async def reg(interaction: discord.Interaction):
     """Команда для регистрации игрока"""
     try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
         if not interaction.guild:
-            await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+            await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
         
         # Проверка открыта ли регистрации
@@ -680,7 +707,7 @@ async def reg(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Проверка на лимит регистраций
@@ -691,7 +718,7 @@ async def reg(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Проверка, не зарегистрирован ли уже игрок
@@ -702,7 +729,7 @@ async def reg(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Генерация уникального номера
@@ -713,7 +740,7 @@ async def reg(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         while True:
@@ -752,7 +779,7 @@ async def reg(interaction: discord.Interaction):
                     description="Не удалось создать роль",
                     color=0xff0000
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await safe_edit_response(interaction, embed=embed)
                 return
         
         # Выдача роли игроку - приводим к Member для доступа к add_roles
@@ -765,7 +792,7 @@ async def reg(interaction: discord.Interaction):
                 description="Не удалось выдать роль",
                 color=0xff0000
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         # Изменение ника игрока
@@ -808,20 +835,18 @@ async def reg(interaction: discord.Interaction):
         embed.set_footer(text="Система регистрации • Ink Game")
         embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде reg: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при регистрации", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при регистрации", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при регистрации", ephemeral=True)
 
-# Слеш-команда статуса
 @bot.tree.command(name="status", description="Проверить статус регистрации")
 async def status(interaction: discord.Interaction):
     """Команда для проверки статуса регистрации"""
     try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
         available_spots = CONFIG['max_players'] - len(CONFIG['registered_players'])
         
         embed = discord.Embed(
@@ -881,433 +906,21 @@ async def status(interaction: discord.Interaction):
         
         embed.set_footer(text="Система регистрации • Ink Game")
         embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде status: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при проверке статуса", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при проверке статуса", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при проверке статуса", ephemeral=True)
 
-@bot.tree.command(name="help", description="Показать справку по командам")
-async def help_cmd(interaction: discord.Interaction):
-    """Показывает справку по командам"""
-    try:
-        embed = discord.Embed(
-            title="📚 СПРАВКА ПО КОМАНДАМ",
-            color=0xff0000
-        )
-        
-        # Команды для всех
-        embed.add_field(
-            name="🎮 Для всех игроков",
-            value=(
-                "`/reg` - Зарегистрироваться\n"
-                "`/status` - Статус регистрации\n"
-                "`/mynumber` - Мой номер\n"
-                "`/players` - Список участников\n"
-                "`/ping` - Проверить пинг\n"
-                "`/titles` - Магазин титулов\n"
-                "`/buy` - Купить титул\n"
-                "`/mytitle` - Мой титул\n"
-                "`/leaderboard` - Таблица лидеров"
-            ),
-            inline=False
-        )
-        
-        # Админ команды
-        if interaction.user.guild_permissions.administrator:
-            embed.add_field(
-                name="⚙️ Для администраторов",
-                value=(
-                    "`/start` - Открыть регистрацию\n"
-                    "`/end` - Завершить игру\n"
-                    "`/list` - Список игроков\n"
-                    "`/reset` - Сбросить игрока\n"
-                    "`/broadcast` - Рассылка\n"
-                    "`/changenumber` - Изменить номер\n"
-                    "`/freenumbers` - Свободные номера\n"
-                    "`/save` - Сохранить данные\n"
-                    "`/load` - Загрузить данные\n"
-                    "`/cc` - Выдать титул Контент Креэйтор"
-                ),
-                inline=False
-            )
-        
-        embed.set_footer(text="Система регистрации • Ink Game")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде help: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе справки", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе справки", ephemeral=True)
-
-@bot.tree.command(name="ping", description="Проверить пинг бота")
-async def ping(interaction: discord.Interaction):
-    """Показывает задержку бота"""
-    try:
-        latency = round(bot.latency * 1000)
-        
-        embed = discord.Embed(
-            title="🏓 PONG!",
-            color=0xff0000
-        )
-        embed.add_field(
-            name="📶 Задержка",
-            value=f"```{latency}мс```",
-            inline=True
-        )
-        embed.add_field(
-            name="🟢 Статус",
-            value="```Онлайн```",
-            inline=True
-        )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде ping: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при проверке пинга", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при проверке пинга", ephemeral=True)
-
-@bot.tree.command(name="freenumbers", description="Показать свободные номера (админы)")
-@app_commands.default_permissions(administrator=True)
-async def freenumbers(interaction: discord.Interaction):
-    """Показывает свободные номера"""
-    try:
-        all_numbers = set(range(CONFIG['min_number'], CONFIG['max_number'] + 1))
-        free_numbers = all_numbers - CONFIG['used_numbers']
-        
-        if not free_numbers:
-            await interaction.response.send_message("❌ Свободных номеров нет", ephemeral=True)
-            return
-        
-        free_numbers_list = sorted(list(free_numbers))
-        
-        embed = discord.Embed(
-            title="🎫 СВОБОДНЫЕ НОМЕРА",
-            color=0xff0000
-        )
-        
-        # Показываем первые 20 свободных номеров
-        display_numbers = [f"{num:03d}" for num in free_numbers_list[:20]]
-        embed.add_field(
-            name=f"Доступно: {len(free_numbers)}",
-            value=", ".join(display_numbers),
-            inline=False
-        )
-        
-        if len(free_numbers) > 20:
-            embed.add_field(
-                name="ℹ️ Показаны первые 20",
-                value=f"Всего свободно: {len(free_numbers)} номеров",
-                inline=False
-            )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде freenumbers: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе свободных номеров", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе свободных номеров", ephemeral=True)
-
-@bot.tree.command(name="changenumber", description="Изменить номер игрока (админы)")
-@app_commands.default_permissions(administrator=True)
-async def changenumber(interaction: discord.Interaction, игрок: discord.Member, новый_номер: int):
-    """Изменяет номер игрока"""
-    try:
-        if игрок.id not in CONFIG['registered_players']:
-            await interaction.response.send_message("❌ Игрок не зарегистрирован", ephemeral=True)
-            return
-        
-        if новый_номер < CONFIG['min_number'] or новый_номер > CONFIG['max_number']:
-            await interaction.response.send_message(
-                f"❌ Номер должен быть от {CONFIG['min_number']} до {CONFIG['max_number']}", 
-                ephemeral=True
-            )
-            return
-        
-        formatted_number = f"{новый_номер:03d}"
-        
-        # Удаляем старый номер
-        old_number = CONFIG['player_numbers'].get(игрок.id)
-        if old_number:
-            old_number_int = int(old_number)
-            if old_number_int in CONFIG['used_numbers']:
-                CONFIG['used_numbers'].remove(old_number_int)
-        
-        # Добавляем новый номер
-        CONFIG['used_numbers'].add(новый_номер)
-        CONFIG['player_numbers'][игрок.id] = formatted_number
-        
-        save_data()
-        
-        # Обновляем ник
-        try:
-            new_nickname = add_number_to_nick(игрок.display_name, formatted_number)
-            await игрок.edit(nick=new_nickname)
-        except discord.Forbidden:
-            pass
-        
-        embed = discord.Embed(
-            title="🔢 НОМЕР ИЗМЕНЕН",
-            description=f"Игроку {игрок.mention} установлен новый номер",
-            color=0xff0000
-        )
-        embed.add_field(
-            name="🎫 Новый номер",
-            value=f"```{formatted_number}```",
-            inline=True
-        )
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде changenumber: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при изменении номера", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при изменении номера", ephemeral=True)
-
-@bot.tree.command(name="broadcast", description="Сделать объявление для всех игроков (админы)")
-@app_commands.default_permissions(administrator=True)
-async def broadcast(interaction: discord.Interaction, сообщение: str):
-    """Отправляет сообщение всем зарегистрированным игрокам"""
-    try:
-        if not CONFIG['registered_players']:
-            await interaction.response.send_message("❌ Нет игроков для рассылки", ephemeral=True)
-            return
-        
-        embed = discord.Embed(
-            title="📢 ОБЪЯВЛЕНИЕ",
-            description=сообщение,
-            color=0xff0000
-        )
-        embed.set_footer(text=f"От администратора • {interaction.user.display_name}")
-        
-        sent_count = 0
-        error_count = 0
-        
-        # Отправляем сообщение о начале рассылки
-        await interaction.response.send_message(
-            f"📤 Начинаю рассылку для {len(CONFIG['registered_players'])} игроков...", 
-            ephemeral=True
-        )
-        
-        for user_id in CONFIG['registered_players']:
-            try:
-                user = await bot.fetch_user(user_id)
-                await user.send(embed=embed)
-                sent_count += 1
-                await asyncio.sleep(0.5)  # Задержка чтобы не превысить лимиты Discord
-            except:
-                error_count += 1
-        
-        # Результат рассылки
-        result_embed = discord.Embed(
-            title="📊 РЕЗУЛЬТАТ РАССЫЛКИ",
-            color=0xff0000
-        )
-        result_embed.add_field(
-            name="✅ Успешно отправлено",
-            value=f"```{sent_count} игрокам```",
-            inline=True
-        )
-        result_embed.add_field(
-            name="❌ Ошибки",
-            value=f"```{error_count}```",
-            inline=True
-        )
-        
-        await interaction.followup.send(embed=result_embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде broadcast: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при рассылке", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при рассылке", ephemeral=True)
-
-@bot.tree.command(name="players", description="Показать список участников")
-async def players(interaction: discord.Interaction):
-    """Показывает количество участников"""
-    try:
-        total_players = len(CONFIG['registered_players'])
-        available_spots = CONFIG['max_players'] - total_players
-        
-        embed = discord.Embed(
-            title="👥 УЧАСТНИКИ",
-            color=0xff0000
-        )
-        embed.add_field(
-            name="🎯 Зарегистрировано",
-            value=f"```{total_players}/{CONFIG['max_players']} игроков```",
-            inline=True
-        )
-        embed.add_field(
-            name="🎫 Свободно мест",
-            value=f"```{available_spots}```",
-            inline=True
-        )
-        
-        if total_players > 0:
-            # Показываем только первые 10 игроков
-            players_list = []
-            count = 0
-            for user_id in list(CONFIG['registered_players'])[:10]:
-                user = bot.get_user(user_id)
-                player_number = CONFIG['player_numbers'].get(user_id, "???")
-                if user:
-                    players_list.append(f"• {user.display_name} ({player_number})")
-                    count += 1
-            
-            if players_list:
-                embed.add_field(
-                    name=f"🎮 Игроки (первые {count})",
-                    value="\n".join(players_list),
-                    inline=False
-                )
-        
-        await interaction.response.send_message(embed=embed)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде players: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе участников", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе участников", ephemeral=True)
-
-@bot.tree.command(name="mynumber", description="Показать ваш игровой номер")
-async def mynumber(interaction: discord.Interaction):
-    """Показывает номер игрока"""
-    try:
-        if interaction.user.id not in CONFIG['registered_players']:
-            embed = discord.Embed(
-                title="❌ Не зарегистрирован",
-                description="Вы не зарегистрированы в игре",
-                color=0xff0000
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        
-        player_number = CONFIG['player_numbers'].get(interaction.user.id, "???")
-        embed = discord.Embed(
-            title="🎫 ВАШ НОМЕР",
-            description=f"**Ваш игровой номер:** `{player_number}`",
-            color=0xff0000
-        )
-        embed.add_field(
-            name="💡 Информация",
-            value="Этот номер будет вашим идентификатором во время события",
-            inline=False
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде mynumber: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе номера", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе номера", ephemeral=True)
-
-# Слеш-команда сброса (только для админов)
-@bot.tree.command(name="reset", description="Сбросить регистрацию конкретного игрока (только для админов)")
-@app_commands.default_permissions(administrator=True)
-async def reset(interaction: discord.Interaction, игрок: discord.Member):
-    """Сброс регистрации конкретного игрока"""
-    try:
-        if not interaction.guild:
-            await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
-            return
-            
-        if игрок.id not in CONFIG['registered_players']:
-            embed = discord.Embed(
-                title="❌ Ошибка",
-                description=f"{игрок.mention} не зарегистрирован в системе",
-                color=0xff0000
-            )
-            embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        
-        # Удаляем номер из использованных
-        player_number = CONFIG['player_numbers'].get(игрок.id)
-        if player_number:
-            number_int = int(player_number)
-            if number_int in CONFIG['used_numbers']:
-                CONFIG['used_numbers'].remove(number_int)
-        
-        # Удаляем игрока из зарегистрированных
-        CONFIG['registered_players'].discard(игрок.id)
-        CONFIG['player_numbers'].pop(игрок.id, None)
-        # УДАЛЯЕМ ТИТУЛ (если хотим оставить титул при сбросе регистрации, закомментируйте эту строку)
-        # CONFIG['player_titles'].pop(игрок.id, None)
-        # УДАЛЯЕМ ИЗ ПОРЯДКА РЕГИСТРАЦИИ
-        if игрок.id in CONFIG['registration_order']:
-            CONFIG['registration_order'].remove(игрок.id)
-        
-        # Сохраняем изменения
-        save_data()
-        
-        # Убираем роль
-        registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
-        if registration_role and registration_role in игрок.roles:
-            try:
-                await игрок.remove_roles(registration_role)
-            except discord.Forbidden:
-                embed = discord.Embed(
-                    title="❌ Ошибка прав доступа",
-                    description="Не удалось убрать роль",
-                    color=0xff0000
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-        
-        # Возвращаем оригинальный ник
-        try:
-            original_nickname = remove_number_from_nick(игрок.display_name)
-            if not original_nickname or original_nickname.isspace():
-                original_nickname = игрок.name
-            await игрок.edit(nick=original_nickname)
-        except discord.Forbidden:
-            pass  # Нет прав на изменение ника
-        
-        embed = discord.Embed(
-            title="🔄 РЕГИСТРАЦИЯ СБРОШЕНА",
-            description=f"Регистрация игрока {игрок.mention} была успешно отменена",
-            color=0xff0000
-        )
-        embed.add_field(
-            name="📊 Текущая статистика",
-            value=f"```Зарегистрировано: {len(CONFIG['registered_players'])}/{CONFIG['max_players']}```",
-            inline=False
-        )
-        embed.set_footer(text="Система регистрации • Ink Game")
-        embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде reset: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при сбросе регистрации", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при сбросе регистрации", ephemeral=True)
-
-# Слеш-команда завершения игры (только для админов)
 @bot.tree.command(name="end", description="Закрыть регистрацию или завершить игру (только для админов)")
 @app_commands.default_permissions(administrator=True)
 async def end(interaction: discord.Interaction):
     """Закрытие регистрации или завершение игры"""
     try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
         if not interaction.guild:
-            await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+            await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
         
         if not CONFIG['game_active']:
@@ -1317,7 +930,7 @@ async def end(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         if CONFIG['registration_open']:
@@ -1344,7 +957,7 @@ async def end(interaction: discord.Interaction):
             )
             embed.set_footer(text="Система регистрации • Ink Game")
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             
         else:
             # Второе использование - завершаем игру полностью
@@ -1357,7 +970,7 @@ async def end(interaction: discord.Interaction):
                     color=0xff0000
                 )
                 embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await safe_edit_response(interaction, embed=embed)
                 return
             
             registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
@@ -1378,7 +991,7 @@ async def end(interaction: discord.Interaction):
                 value="```Обработка игроков...```",
                 inline=False
             )
-            await interaction.response.send_message(embed=processing_embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=processing_embed)
             
             # Обрабатываем каждого игрока
             for user_id in list(CONFIG['registered_players']):
@@ -1478,22 +1091,413 @@ async def end(interaction: discord.Interaction):
             result_embed.set_footer(text="Система регистрации • Ink Game")
             result_embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
             
-            # Редактируем первоначальное сообщение
-            await interaction.edit_original_response(embed=result_embed)
+            await safe_edit_response(interaction, embed=result_embed)
             
     except Exception as e:
         logger.error(f"❌ Ошибка в команде end: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при завершении игры", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при завершении игры", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при завершении игры", ephemeral=True)
 
-# Слеш-команда списка (только для админов)
+# ==================== ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ====================
+
+@bot.tree.command(name="help", description="Показать справку по командам")
+async def help_cmd(interaction: discord.Interaction):
+    """Показывает справку по командам"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        embed = discord.Embed(
+            title="📚 СПРАВКА ПО КОМАНДАМ",
+            color=0xff0000
+        )
+        
+        # Команды для всех
+        embed.add_field(
+            name="🎮 Для всех игроков",
+            value=(
+                "`/reg` - Зарегистрироваться\n"
+                "`/status` - Статус регистрации\n"
+                "`/mynumber` - Мой номер\n"
+                "`/players` - Список участников\n"
+                "`/ping` - Проверить пинг\n"
+                "`/titles` - Магазин титулов\n"
+                "`/buy` - Купить титул\n"
+                "`/mytitle` - Мой титул\n"
+                "`/leaderboard` - Таблица лидеров"
+            ),
+            inline=False
+        )
+        
+        # Админ команды
+        if interaction.user.guild_permissions.administrator:
+            embed.add_field(
+                name="⚙️ Для администраторов",
+                value=(
+                    "`/start` - Открыть регистрацию\n"
+                    "`/end` - Завершить игру\n"
+                    "`/list` - Список игроков\n"
+                    "`/reset` - Сбросить игрока\n"
+                    "`/broadcast` - Рассылка\n"
+                    "`/changenumber` - Изменить номер\n"
+                    "`/freenumbers` - Свободные номера\n"
+                    "`/save` - Сохранить данные\n"
+                    "`/load` - Загрузить данные\n"
+                    "`/cc` - Выдать титул Контент Креэйтор"
+                ),
+                inline=False
+            )
+        
+        embed.set_footer(text="Система регистрации • Ink Game")
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде help: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе справки", ephemeral=True)
+
+@bot.tree.command(name="ping", description="Проверить пинг бота")
+async def ping(interaction: discord.Interaction):
+    """Показывает задержку бота"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        latency = round(bot.latency * 1000)
+        
+        embed = discord.Embed(
+            title="🏓 PONG!",
+            color=0xff0000
+        )
+        embed.add_field(
+            name="📶 Задержка",
+            value=f"```{latency}мс```",
+            inline=True
+        )
+        embed.add_field(
+            name="🟢 Статус",
+            value="```Онлайн```",
+            inline=True
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде ping: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при проверке пинга", ephemeral=True)
+
+@bot.tree.command(name="freenumbers", description="Показать свободные номера (админы)")
+@app_commands.default_permissions(administrator=True)
+async def freenumbers(interaction: discord.Interaction):
+    """Показывает свободные номера"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        all_numbers = set(range(CONFIG['min_number'], CONFIG['max_number'] + 1))
+        free_numbers = all_numbers - CONFIG['used_numbers']
+        
+        if not free_numbers:
+            await safe_edit_response(interaction, content="❌ Свободных номеров нет")
+            return
+        
+        free_numbers_list = sorted(list(free_numbers))
+        
+        embed = discord.Embed(
+            title="🎫 СВОБОДНЫЕ НОМЕРА",
+            color=0xff0000
+        )
+        
+        # Показываем первые 20 свободных номеров
+        display_numbers = [f"{num:03d}" for num in free_numbers_list[:20]]
+        embed.add_field(
+            name=f"Доступно: {len(free_numbers)}",
+            value=", ".join(display_numbers),
+            inline=False
+        )
+        
+        if len(free_numbers) > 20:
+            embed.add_field(
+                name="ℹ️ Показаны первые 20",
+                value=f"Всего свободно: {len(free_numbers)} номеров",
+                inline=False
+            )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде freenumbers: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе свободных номеров", ephemeral=True)
+
+@bot.tree.command(name="changenumber", description="Изменить номер игрока (админы)")
+@app_commands.default_permissions(administrator=True)
+async def changenumber(interaction: discord.Interaction, игрок: discord.Member, новый_номер: int):
+    """Изменяет номер игрока"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        if игрок.id not in CONFIG['registered_players']:
+            await safe_edit_response(interaction, content="❌ Игрок не зарегистрирован")
+            return
+        
+        if новый_номер < CONFIG['min_number'] or новый_номер > CONFIG['max_number']:
+            await safe_edit_response(interaction, content=f"❌ Номер должен быть от {CONFIG['min_number']} до {CONFIG['max_number']}")
+            return
+        
+        formatted_number = f"{новый_номер:03d}"
+        
+        # Удаляем старый номер
+        old_number = CONFIG['player_numbers'].get(игрок.id)
+        if old_number:
+            old_number_int = int(old_number)
+            if old_number_int in CONFIG['used_numbers']:
+                CONFIG['used_numbers'].remove(old_number_int)
+        
+        # Добавляем новый номер
+        CONFIG['used_numbers'].add(новый_номер)
+        CONFIG['player_numbers'][игрок.id] = formatted_number
+        
+        save_data()
+        
+        # Обновляем ник
+        try:
+            new_nickname = add_number_to_nick(игрок.display_name, formatted_number)
+            await игрок.edit(nick=new_nickname)
+        except discord.Forbidden:
+            pass
+        
+        embed = discord.Embed(
+            title="🔢 НОМЕР ИЗМЕНЕН",
+            description=f"Игроку {игрок.mention} установлен новый номер",
+            color=0xff0000
+        )
+        embed.add_field(
+            name="🎫 Новый номер",
+            value=f"```{formatted_number}```",
+            inline=True
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде changenumber: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при изменении номера", ephemeral=True)
+
+@bot.tree.command(name="broadcast", description="Сделать объявление для всех игроков (админы)")
+@app_commands.default_permissions(administrator=True)
+async def broadcast(interaction: discord.Interaction, сообщение: str):
+    """Отправляет сообщение всем зарегистрированным игрокам"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        if not CONFIG['registered_players']:
+            await safe_edit_response(interaction, content="❌ Нет игроков для рассылки")
+            return
+        
+        embed = discord.Embed(
+            title="📢 ОБЪЯВЛЕНИЕ",
+            description=сообщение,
+            color=0xff0000
+        )
+        embed.set_footer(text=f"От администратора • {interaction.user.display_name}")
+        
+        sent_count = 0
+        error_count = 0
+        
+        await safe_edit_response(interaction, content=f"📤 Начинаю рассылку для {len(CONFIG['registered_players'])} игроков...")
+        
+        for user_id in CONFIG['registered_players']:
+            try:
+                user = await bot.fetch_user(user_id)
+                await user.send(embed=embed)
+                sent_count += 1
+                await asyncio.sleep(0.5)  # Задержка чтобы не превысить лимиты Discord
+            except:
+                error_count += 1
+        
+        # Результат рассылки
+        result_embed = discord.Embed(
+            title="📊 РЕЗУЛЬТАТ РАССЫЛКИ",
+            color=0xff0000
+        )
+        result_embed.add_field(
+            name="✅ Успешно отправлено",
+            value=f"```{sent_count} игрокам```",
+            inline=True
+        )
+        result_embed.add_field(
+            name="❌ Ошибки",
+            value=f"```{error_count}```",
+            inline=True
+        )
+        
+        await interaction.followup.send(embed=result_embed, ephemeral=True)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде broadcast: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при рассылке", ephemeral=True)
+
+@bot.tree.command(name="players", description="Показать список участников")
+async def players(interaction: discord.Interaction):
+    """Показывает количество участников"""
+    try:
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
+        total_players = len(CONFIG['registered_players'])
+        available_spots = CONFIG['max_players'] - total_players
+        
+        embed = discord.Embed(
+            title="👥 УЧАСТНИКИ",
+            color=0xff0000
+        )
+        embed.add_field(
+            name="🎯 Зарегистрировано",
+            value=f"```{total_players}/{CONFIG['max_players']} игроков```",
+            inline=True
+        )
+        embed.add_field(
+            name="🎫 Свободно мест",
+            value=f"```{available_spots}```",
+            inline=True
+        )
+        
+        if total_players > 0:
+            # Показываем только первые 10 игроков
+            players_list = []
+            count = 0
+            for user_id in list(CONFIG['registered_players'])[:10]:
+                user = bot.get_user(user_id)
+                player_number = CONFIG['player_numbers'].get(user_id, "???")
+                if user:
+                    players_list.append(f"• {user.display_name} ({player_number})")
+                    count += 1
+            
+            if players_list:
+                embed.add_field(
+                    name=f"🎮 Игроки (первые {count})",
+                    value="\n".join(players_list),
+                    inline=False
+                )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде players: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе участников", ephemeral=True)
+
+@bot.tree.command(name="mynumber", description="Показать ваш игровой номер")
+async def mynumber(interaction: discord.Interaction):
+    """Показывает номер игрока"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        if interaction.user.id not in CONFIG['registered_players']:
+            embed = discord.Embed(
+                title="❌ Не зарегистрирован",
+                description="Вы не зарегистрированы в игре",
+                color=0xff0000
+            )
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        player_number = CONFIG['player_numbers'].get(interaction.user.id, "???")
+        embed = discord.Embed(
+            title="🎫 ВАШ НОМЕР",
+            description=f"**Ваш игровой номер:** `{player_number}`",
+            color=0xff0000
+        )
+        embed.add_field(
+            name="💡 Информация",
+            value="Этот номер будет вашим идентификатором во время события",
+            inline=False
+        )
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде mynumber: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе номера", ephemeral=True)
+
+@bot.tree.command(name="reset", description="Сбросить регистрацию конкретного игрока (только для админов)")
+@app_commands.default_permissions(administrator=True)
+async def reset(interaction: discord.Interaction, игрок: discord.Member):
+    """Сброс регистрации конкретного игрока"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        if not interaction.guild:
+            await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
+            return
+            
+        if игрок.id not in CONFIG['registered_players']:
+            embed = discord.Embed(
+                title="❌ Ошибка",
+                description=f"{игрок.mention} не зарегистрирован в системе",
+                color=0xff0000
+            )
+            embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        # Удаляем номер из использованных
+        player_number = CONFIG['player_numbers'].get(игрок.id)
+        if player_number:
+            number_int = int(player_number)
+            if number_int in CONFIG['used_numbers']:
+                CONFIG['used_numbers'].remove(number_int)
+        
+        # Удаляем игрока из зарегистрированных
+        CONFIG['registered_players'].discard(игрок.id)
+        CONFIG['player_numbers'].pop(игрок.id, None)
+        # УДАЛЯЕМ ИЗ ПОРЯДКА РЕГИСТРАЦИИ
+        if игрок.id in CONFIG['registration_order']:
+            CONFIG['registration_order'].remove(игрок.id)
+        
+        # Сохраняем изменения
+        save_data()
+        
+        # Убираем роль
+        registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
+        if registration_role and registration_role in игрок.roles:
+            try:
+                await игрок.remove_roles(registration_role)
+            except discord.Forbidden:
+                embed = discord.Embed(
+                    title="❌ Ошибка прав доступа",
+                    description="Не удалось убрать роль",
+                    color=0xff0000
+                )
+                await safe_edit_response(interaction, embed=embed)
+                return
+        
+        # Возвращаем оригинальный ник
+        try:
+            original_nickname = remove_number_from_nick(игрок.display_name)
+            if not original_nickname or original_nickname.isspace():
+                original_nickname = игрок.name
+            await игрок.edit(nick=original_nickname)
+        except discord.Forbidden:
+            pass  # Нет прав на изменение ника
+        
+        embed = discord.Embed(
+            title="🔄 РЕГИСТРАЦИЯ СБРОШЕНА",
+            description=f"Регистрация игрока {игрок.mention} была успешно отменена",
+            color=0xff0000
+        )
+        embed.add_field(
+            name="📊 Текущая статистика",
+            value=f"```Зарегистрировано: {len(CONFIG['registered_players'])}/{CONFIG['max_players']}```",
+            inline=False
+        )
+        embed.set_footer(text="Система регистрации • Ink Game")
+        embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде reset: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при сбросе регистрации", ephemeral=True)
+
 @bot.tree.command(name="list", description="Показать список зарегистрированных (только для админов)")
 @app_commands.default_permissions(administrator=True)
 async def list_cmd(interaction: discord.Interaction):
     """Список зарегистрированных"""
     try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
         if not CONFIG['registered_players']:
             embed = discord.Embed(
                 title="📝 СПИСОК ИГРОКОВ",
@@ -1501,7 +1505,7 @@ async def list_cmd(interaction: discord.Interaction):
                 color=0xff0000
             )
             embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await safe_edit_response(interaction, embed=embed)
             return
         
         embed = discord.Embed(
@@ -1541,21 +1545,19 @@ async def list_cmd(interaction: discord.Interaction):
         )
         embed.set_footer(text="Система регистрации • Ink Game")
         embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде list: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при показе списка игроков", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при показе списка игроков", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе списка игроков", ephemeral=True)
 
-# Слеш-команда для сохранения данных (админы)
 @bot.tree.command(name="save", description="Принудительно сохранить данные игры (админы)")
 @app_commands.default_permissions(administrator=True)
 async def save_cmd(interaction: discord.Interaction):
     """Принудительное сохранение данных"""
     try:
+        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
         if save_data():
             embed = discord.Embed(
                 title="💾 ДАННЫЕ СОХРАНЕНЫ",
@@ -1579,21 +1581,19 @@ async def save_cmd(interaction: discord.Interaction):
                 color=0xff0000
             )
         
-        await interaction.response.send_message(embed=embed)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде save: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при сохранении данных", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при сохранении данных", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при сохранении данных", ephemeral=True)
 
-# Слеш-команда для загрузки данных (админы)
 @bot.tree.command(name="load", description="Принудительно загрузить данные игры (админы)")
 @app_commands.default_permissions(administrator=True)
 async def load_cmd(interaction: discord.Interaction):
     """Принудительная загрузка данных"""
     try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
         if load_data():
             embed = discord.Embed(
                 title="📂 ДАННЫЕ ЗАГРУЖЕНЫ",
@@ -1612,14 +1612,11 @@ async def load_cmd(interaction: discord.Interaction):
                 color=0xff0000
             )
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде load: {e}")
-        try:
-            await interaction.response.send_message("❌ Произошла ошибка при загрузке данных", ephemeral=True)
-        except:
-            await interaction.followup.send("❌ Произошла ошибка при загрузке данных", ephemeral=True)
+        await safe_send_response(interaction, "❌ Произошла ошибка при загрузке данных", ephemeral=True)
 
 # Обычная команда для синхронизации (на случай если команды не появляются)
 @bot.command()
@@ -1671,4 +1668,3 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
-
