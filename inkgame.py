@@ -918,21 +918,23 @@ async def mytitle(interaction: discord.Interaction):
     try:
         await safe_defer_response(interaction, ephemeral=True, thinking=True)
         
-        if interaction.user.id not in CONFIG['player_titles']:
+        user_id = interaction.user.id
+        
+        if user_id not in CONFIG['player_titles'] or CONFIG['player_titles'][user_id]['equipped'] is None:
             embed = discord.Embed(
                 title="🏆 ВАШ ТИТУЛ",
-                description="У вас пока нет титула. Используйте `/titles` для просмотра доступных титулов.",
+                description="У вас пока нет надетого титула. Используйте `/titles` для покупки и `/equip` для надевания.",
                 color=0xff0000
             )
             await safe_edit_response(interaction, embed=embed)
             return
         
-        title = CONFIG['player_titles'][interaction.user.id]
-        color = AVAILABLE_TITLES.get(title, 0xff0000)
+        equipped_title = CONFIG['player_titles'][user_id]['equipped']
+        color = AVAILABLE_TITLES.get(equipped_title, 0xff0000)
         
         embed = discord.Embed(
             title="🏆 ВАШ ТИТУЛ",
-            description=f"**{title}**",
+            description=f"**{equipped_title}**",
             color=color
         )
         
@@ -945,6 +947,12 @@ async def mytitle(interaction: discord.Interaction):
         embed.add_field(
             name="👀 Просмотр",
             value="Ваш титул отображается в `/leaderboard`",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎒 Всего титулов",
+            value=f"```{len(CONFIG['player_titles'][user_id]['owned'])}```",
             inline=True
         )
         
@@ -1165,56 +1173,6 @@ async def reg(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"❌ Ошибка в команде reg: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при регистрации", ephemeral=True)
-
-@bot.tree.command(name="mytitle", description="Показать ваш текущий титул")
-async def mytitle(interaction: discord.Interaction):
-    """Показывает текущий титул игрока"""
-    try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
-        
-        user_id = interaction.user.id
-        
-        if user_id not in CONFIG['player_titles'] or CONFIG['player_titles'][user_id]['equipped'] is None:
-            embed = discord.Embed(
-                title="🏆 ВАШ ТИТУЛ",
-                description="У вас пока нет надетого титула. Используйте `/titles` для покупки и `/equip` для надевания.",
-                color=0xff0000
-            )
-            await safe_edit_response(interaction, embed=embed)
-            return
-        
-        equipped_title = CONFIG['player_titles'][user_id]['equipped']
-        color = AVAILABLE_TITLES.get(equipped_title, 0xff0000)
-        
-        embed = discord.Embed(
-            title="🏆 ВАШ ТИТУЛ",
-            description=f"**{equipped_title}**",
-            color=color
-        )
-        
-        embed.add_field(
-            name="🎨 Цвет",
-            value=f"```{color}```",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="👀 Просмотр",
-            value="Ваш титул отображается в `/leaderboard`",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="🎒 Всего титулов",
-            value=f"```{len(CONFIG['player_titles'][user_id]['owned'])}```",
-            inline=True
-        )
-        
-        await safe_edit_response(interaction, embed=embed)
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка в команде mytitle: {e}")
-        await safe_send_response(interaction, "❌ Произошла ошибка при показе титула", ephemeral=True)
 
 @bot.tree.command(name="status", description="Проверить статус регистрации")
 async def status(interaction: discord.Interaction):
