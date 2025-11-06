@@ -12,6 +12,7 @@ import threading
 from typing import Optional, cast
 from dotenv import load_dotenv
 from flask import Flask
+import datetime
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +37,27 @@ CONFIG = {
     'registered_players': set(),
     'player_numbers': {},
     'registration_open': False,
-    'game_active': False
+    'game_active': False,
+    'player_titles': {},  # Новое: титулы игроков
+    'registration_order': []  # Новое: порядок регистрации для лидерборда
+}
+
+# Доступные титулы и их цвета
+AVAILABLE_TITLES = {
+    "EchoFan": 0x800080,  # Фиолетовый
+    "Legend": 0x00FFFF,    # Голубой
+    "Rich": 0xFFD700,      # Золотистый
+    "mastermind": 0xFFFFFF, # Белый
+    "Контент Креэйтор": 0xFF0000  # Красный
+}
+
+# Цены титулов
+TITLE_PRICES = {
+    "EchoFan": 5000,
+    "Legend": 10000,
+    "Rich": 15000,
+    "mastermind": 20000,
+    "Контент Креэйтор": 0  # Бесплатный, только через админов
 }
 
 # Токены из переменных окружения
@@ -89,8 +110,10 @@ def save_data():
             'player_numbers': CONFIG['player_numbers'],
             'registration_open': CONFIG['registration_open'],
             'game_active': CONFIG['game_active'],
+            'player_titles': CONFIG['player_titles'],  # Сохраняем титулы
+            'registration_order': CONFIG['registration_order'],  # Сохраняем порядок регистрации
             'saved_at': str(datetime.datetime.now()),
-            'version': '1.0'
+            'version': '1.1'  # Обновляем версию
         }
         
         # Сначала сохраняем во временный файл
@@ -131,6 +154,8 @@ def load_data():
         CONFIG['used_numbers'].clear()
         CONFIG['registered_players'].clear()
         CONFIG['player_numbers'].clear()
+        CONFIG['player_titles'].clear()
+        CONFIG['registration_order'].clear()
         
         # Загружаем used_numbers
         if 'used_numbers' in data:
@@ -151,6 +176,24 @@ def load_data():
                     logger.warning(f"⚠️ Неверный user_id в данных: {user_id_str}")
                     continue
         
+        # Загружаем player_titles (новая функция)
+        if 'player_titles' in data:
+            CONFIG['player_titles'] = {}
+            for user_id_str, title in data['player_titles'].items():
+                try:
+                    user_id = int(user_id_str)
+                    CONFIG['player_titles'][user_id] = title
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Неверный user_id в данных титулов: {user_id_str}")
+                    continue
+        
+        # Загружаем registration_order (новая функция)
+        if 'registration_order' in data:
+            CONFIG['registration_order'] = data['registration_order']
+        else:
+            # Для совместимости со старыми версиями
+            CONFIG['registration_order'] = list(CONFIG['registered_players'])
+        
         # Загружаем флаги
         if 'registration_open' in data:
             CONFIG['registration_open'] = data['registration_open']
@@ -160,6 +203,7 @@ def load_data():
         logger.info("✅ Данные загружены")
         logger.info(f"📊 Загружено игроков: {len(CONFIG['registered_players'])}")
         logger.info(f"🔢 Использовано номеров: {len(CONFIG['used_numbers'])}")
+        logger.info(f"🏆 Загружено титулов: {len(CONFIG['player_titles'])}")
         return True
         
     except Exception as e:
@@ -168,9 +212,12 @@ def load_data():
         CONFIG['used_numbers'].clear()
         CONFIG['registered_players'].clear()
         CONFIG['player_numbers'].clear()
+        CONFIG['player_titles'].clear()
+        CONFIG['registration_order'].clear()
         CONFIG['registration_open'] = False
         CONFIG['game_active'] = False
         return False
+
 @bot.event
 async def on_ready():
     logger.info(f'✅ Бот {bot.user} запущен!')
@@ -200,7 +247,7 @@ def remove_number_from_nick(nickname: Optional[str]) -> str:
     return ""
 
 def add_number_to_nick(nickname: Optional[str], number: str) -> str:
-    """Добавляет номер к нику в формаte (123)"""
+    """Добавляет номер к нику в формате (123)"""
     clean_nick = remove_number_from_nick(nickname)
     new_nick = f"{clean_nick} ({number})"
     return new_nick[:32]  # Ограничение Discord
@@ -226,6 +273,312 @@ async def add_money_to_user(guild_id: int, user_id: int, amount: int):
                     return False, f"Ошибка {response.status}: {error_text}"
     except Exception as e:
         return False, f"Ошибка соединения: {e}"
+
+async def get_user_balance(guild_id: int, user_id: int):
+    """Получает баланс пользователя через UnbelievaBoat"""
+    url = f"https://unbelievaboat.com/api/v1/guilds/{guild_id}/users/{user_id}"
+    headers = {
+        "Authorization": UNBELIEVABOAT_TOKEN
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return True, data
+                else:
+                    error_text = await response.text()
+                    return False, f"Ошибка {response.status}: {error_text}"
+    except Exception as e:
+        return False, f"Ошибка соединения: {e}"
+
+# ==================== НОВЫЕ КОМАНДЫ ====================
+
+@bot.tree.command(name="titles", description="Магазин титулов")
+async def titles(interaction: discord.Interaction):
+    """Показывает доступные титулы для покупки"""
+    embed = discord.Embed(
+        title="🏆 МАГАЗИН ТИТУЛОВ",
+        description="Приобретите уникальный титул для отображения в лидерборде!",
+        color=0xff0000
+    )
+    
+    for title, color in AVAILABLE_TITLES.items():
+        price = TITLE_PRICES[title]
+        price_text = "🎁 Бесплатно (выдается админами)" if price == 0 else f"💵 {price:,}$"
+        
+        embed.add_field(
+            name=f"**{title}**",
+            value=f"Цвет: {color}\nЦена: {price_text}",
+            inline=True
+        )
+    
+    embed.add_field(
+        name="🛒 Как купить",
+        value="Используйте команду `/buy <название_титула>` для покупки",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="ℹ️ Информация",
+        value="Титулы отображаются рядом с вашим ником в `/leaderboard`",
+        inline=False
+    )
+    
+    embed.set_footer(text="Магазин титулов • Ink Game")
+    embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="buy", description="Купить титул")
+async def buy(interaction: discord.Interaction, название_титула: str):
+    """Покупка титула"""
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+        return
+    
+    # Проверяем, зарегистрирован ли пользователь
+    if interaction.user.id not in CONFIG['registered_players']:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description="Вы должны быть зарегистрированы в игре для покупки титулов",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Проверяем существование титула
+    if название_титула not in AVAILABLE_TITLES:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description="Такого титула не существует. Используйте `/titles` для просмотра доступных титулов.",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Проверяем, не куплен ли уже титул
+    if interaction.user.id in CONFIG['player_titles'] and CONFIG['player_titles'][interaction.user.id] == название_титула:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description="У вас уже есть этот титул!",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    price = TITLE_PRICES[название_титула]
+    
+    # Проверяем баланс
+    success, balance_data = await get_user_balance(interaction.guild.id, interaction.user.id)
+    
+    if not success:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description=f"Не удалось проверить баланс: {balance_data}",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    total_balance = balance_data.get('cash', 0) + balance_data.get('bank', 0)
+    
+    if total_balance < price:
+        embed = discord.Embed(
+            title="❌ Недостаточно средств",
+            description=f"У вас {total_balance:,}$, а нужно {price:,}$",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Списываем деньги (если титул не бесплатный)
+    if price > 0:
+        success, message = await add_money_to_user(interaction.guild.id, interaction.user.id, -price)
+        if not success:
+            embed = discord.Embed(
+                title="❌ Ошибка оплаты",
+                description=f"Не удалось списать средства: {message}",
+                color=0xff0000
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+    
+    # Выдаем титул
+    CONFIG['player_titles'][interaction.user.id] = название_титула
+    save_data()
+    
+    # Сообщение об успехе
+    embed = discord.Embed(
+        title="✅ ТИТУЛ ПРИОБРЕТЕН",
+        description=f"Вы успешно приобрели титул **{название_титула}**!",
+        color=AVAILABLE_TITLES[название_титула]
+    )
+    
+    if price > 0:
+        embed.add_field(
+            name="💵 Стоимость",
+            value=f"```{price:,}$```",
+            inline=True
+        )
+    
+    embed.add_field(
+        name="🎨 Цвет",
+        value=f"```{AVAILABLE_TITLES[название_титула]}```",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="👀 Просмотр",
+        value="Ваш титул теперь отображается в `/leaderboard`",
+        inline=False
+    )
+    
+    embed.set_footer(text="Магазин титулов • Ink Game")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="leaderboard", description="Таблица лидеров по порядку регистрации")
+async def leaderboard(interaction: discord.Interaction, страница: int = 1):
+    """Показывает таблицу лидеров"""
+    if not CONFIG['registration_order']:
+        embed = discord.Embed(
+            title="📊 ЛИДЕРБОРД",
+            description="Пока нет зарегистрированных игроков",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed)
+        return
+    
+    # Проверяем валидность страницы
+    total_pages = (len(CONFIG['registration_order']) + 9) // 10
+    if страница < 1 or страница > total_pages:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description=f"Доступны страницы от 1 до {total_pages}",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    embed = discord.Embed(
+        title="📊 ЛИДЕРБОРД",
+        description="Игроки в порядке регистрации",
+        color=0xff0000
+    )
+    
+    # Вычисляем диапазон игроков для текущей страницы
+    start_index = (страница - 1) * 10
+    end_index = min(start_index + 10, len(CONFIG['registration_order']))
+    
+    leaderboard_text = ""
+    
+    for i in range(start_index, end_index):
+        user_id = CONFIG['registration_order'][i]
+        user = bot.get_user(user_id)
+        player_number = CONFIG['player_numbers'].get(user_id, "???")
+        
+        if user:
+            # Получаем титул игрока
+            title = CONFIG['player_titles'].get(user_id)
+            title_text = f"**{title}** " if title else ""
+            
+            leaderboard_text += f"`#{i+1:2d}` {title_text}{user.display_name} ({player_number})\n"
+        else:
+            leaderboard_text += f"`#{i+1:2d}` Unknown User ({player_number})\n"
+    
+    embed.add_field(
+        name=f"🎮 Игроки ({start_index + 1}-{end_index})",
+        value=leaderboard_text or "Нет данных",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Страница {страница}/{total_pages} • Лидерборд • Ink Game")
+    embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="cc", description="Выдать титул 'Контент Креэйтор' (админы)")
+@app_commands.default_permissions(administrator=True)
+async def cc(interaction: discord.Interaction, игрок: discord.Member):
+    """Выдает специальный титул Контент Креэйтор"""
+    if not interaction.guild:
+        await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
+        return
+    
+    # Проверяем, зарегистрирован ли игрок
+    if игрок.id not in CONFIG['registered_players']:
+        embed = discord.Embed(
+            title="❌ Ошибка",
+            description="Игрок должен быть зарегистрирован в игре",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    # Выдаем титул
+    CONFIG['player_titles'][игрок.id] = "Контент Креэйтор"
+    save_data()
+    
+    embed = discord.Embed(
+        title="🎁 ТИТУЛ ВЫДАН",
+        description=f"Игрок {игрок.mention} получил титул **Контент Креэйтор**!",
+        color=0xFF0000  # Красный цвет для этого титула
+    )
+    
+    embed.add_field(
+        name="🎨 Цвет титула",
+        value="```Красный```",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="👀 Просмотр",
+        value="Титул отображается в `/leaderboard`",
+        inline=True
+    )
+    
+    embed.set_footer(text="Специальный титул • Ink Game")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="mytitle", description="Показать ваш текущий титул")
+async def mytitle(interaction: discord.Interaction):
+    """Показывает текущий титул игрока"""
+    if interaction.user.id not in CONFIG['player_titles']:
+        embed = discord.Embed(
+            title="🏆 ВАШ ТИТУЛ",
+            description="У вас пока нет титула. Используйте `/titles` для просмотра доступных титулов.",
+            color=0xff0000
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+    
+    title = CONFIG['player_titles'][interaction.user.id]
+    color = AVAILABLE_TITLES.get(title, 0xff0000)
+    
+    embed = discord.Embed(
+        title="🏆 ВАШ ТИТУЛ",
+        description=f"**{title}**",
+        color=color
+    )
+    
+    embed.add_field(
+        name="🎨 Цвет",
+        value=f"```{color}```",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="👀 Просмотр",
+        value="Ваш титул отображается в `/leaderboard`",
+        inline=True
+    )
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ==================== СУЩЕСТВУЮЩИЕ КОМАНДЫ ====================
 
 # Слеш-команда открытия регистрации (только для админов)
 @bot.tree.command(name="start", description="Открыть регистрацию для всех игроков (только для админов)")
@@ -285,7 +638,7 @@ async def reg(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Эта команда работает только на сервере", ephemeral=True)
         return
     
-    # Проверка открыта ли регистрация
+    # Проверка открыта ли регистрации
     if not CONFIG['registration_open']:
         embed = discord.Embed(
             title="🚫 Регистрация закрыта",
@@ -341,6 +694,9 @@ async def reg(interaction: discord.Interaction):
     # Добавление игрока в зарегистрированные
     CONFIG['registered_players'].add(interaction.user.id)
     CONFIG['player_numbers'][interaction.user.id] = formatted_number
+    # ДОБАВЛЯЕМ В ПОРЯДОК РЕГИСТРАЦИИ
+    if interaction.user.id not in CONFIG['registration_order']:
+        CONFIG['registration_order'].append(interaction.user.id)
     
     # Сохраняем изменения
     save_data()
@@ -421,6 +777,69 @@ async def reg(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # Слеш-команда статуса
+@bot.tree.command(name="status", description="Проверить статус регистрации")
+async def status(interaction: discord.Interaction):
+    """Команда для проверки статуса регистрации"""
+    available_spots = CONFIG['max_players'] - len(CONFIG['registered_players'])
+    
+    embed = discord.Embed(
+        title="📊 СТАТУС РЕГИСТРАЦИИ",
+        color=0xff0000
+    )
+    
+    # Статус регистрации
+    if CONFIG['registration_open']:
+        reg_status = "🟢 ОТКРЫТА"
+        reg_description = "Регистрация активна, можно присоединиться"
+    else:
+        reg_status = "🔴 ЗАКРЫТА"
+        reg_description = "Регистрация неактивна"
+    
+    # Статус игры
+    if CONFIG['game_active']:
+        game_status = "🟢 АКТИВНА"
+        game_description = "Событие в процессе"
+    else:
+        game_status = "🔴 ЗАВЕРШЕНА"
+        game_description = "Событие завершено"
+    
+    embed.add_field(
+        name="🎯 Статус регистрации",
+        value=f"```{reg_status}```\n{reg_description}",
+        inline=True
+    )
+    embed.add_field(
+        name="🎮 Статус игры",
+        value=f"```{game_status}```\n{game_description}",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="👥 Зарегистрировано",
+        value=f"```{len(CONFIG['registered_players'])}/{CONFIG['max_players']} игроков```",
+        inline=True
+    )
+    embed.add_field(
+        name="🎫 Свободных мест",
+        value=f"```{available_spots} мест```",
+        inline=True
+    )
+    embed.add_field(
+        name="🔢 Использовано номеров",
+        value=f"```{len(CONFIG['used_numbers'])} из {CONFIG['max_number'] - CONFIG['min_number'] + 1}```",
+        inline=True
+    )
+    
+    if CONFIG['registration_open'] and available_spots > 0:
+        embed.add_field(
+            name="🎮 Присоединиться",
+            value="Используйте команду `/reg` для регистрации",
+            inline=False
+        )
+    
+    embed.set_footer(text="Система регистрации • Ink Game")
+    embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="help", description="Показать справку по командам")
 async def help_cmd(interaction: discord.Interaction):
@@ -438,7 +857,11 @@ async def help_cmd(interaction: discord.Interaction):
             "`/status` - Статус регистрации\n"
             "`/mynumber` - Мой номер\n"
             "`/players` - Список участников\n"
-            "`/ping` - Проверить пинг"
+            "`/ping` - Проверить пинг\n"
+            "`/titles` - Магазин титулов\n"
+            "`/buy` - Купить титул\n"
+            "`/mytitle` - Мой титул\n"
+            "`/leaderboard` - Таблица лидеров"
         ),
         inline=False
     )
@@ -456,7 +879,8 @@ async def help_cmd(interaction: discord.Interaction):
                 "`/changenumber` - Изменить номер\n"
                 "`/freenumbers` - Свободные номера\n"
                 "`/save` - Сохранить данные\n"
-                "`/load` - Загрузить данные"
+                "`/load` - Загрузить данные\n"
+                "`/cc` - Выдать титул Контент Креэйтор"
             ),
             inline=False
         )
@@ -688,350 +1112,7 @@ async def mynumber(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="status", description="Проверить статус регистрации")
-async def status(interaction: discord.Interaction):
-    """Команда для проверки статуса регистрации"""
-    available_spots = CONFIG['max_players'] - len(CONFIG['registered_players'])
-    
-    embed = discord.Embed(
-        title="📊 СТАТУС РЕГИСТРАЦИИ",
-        color=0xff0000
-    )
-    
-    # Статус регистрации
-    if CONFIG['registration_open']:
-        reg_status = "🟢 ОТКРЫТА"
-        reg_description = "Регистрация активна, можно присоединиться"
-    else:
-        reg_status = "🔴 ЗАКРЫТА"
-        reg_description = "Регистрация неактивна"
-    
-    # Статус игры
-    if CONFIG['game_active']:
-        game_status = "🟢 АКТИВНА"
-        game_description = "Событие в процессе"
-    else:
-        game_status = "🔴 ЗАВЕРШЕНА"
-        game_description = "Событие завершено"
-    
-    embed.add_field(
-        name="🎯 Статус регистрации",
-        value=f"```{reg_status}```\n{reg_description}",
-        inline=True
-    )
-    embed.add_field(
-        name="🎮 Статус игры",
-        value=f"```{game_status}```\n{game_description}",
-        inline=True
-    )
-    
-    embed.add_field(
-        name="👥 Зарегистрировано",
-        value=f"```{len(CONFIG['registered_players'])}/{CONFIG['max_players']} игроков```",
-        inline=True
-    )
-    embed.add_field(
-        name="🎫 Свободных мест",
-        value=f"```{available_spots} мест```",
-        inline=True
-    )
-    embed.add_field(
-        name="🔢 Использовано номеров",
-        value=f"```{len(CONFIG['used_numbers'])} из {CONFIG['max_number'] - CONFIG['min_number'] + 1}```",
-        inline=True
-    )
-    
-    if CONFIG['registration_open'] and available_spots > 0:
-        embed.add_field(
-            name="🎮 Присоединиться",
-            value="Используйте команду `/reg` для регистрации",
-            inline=False
-        )
-    
-    embed.set_footer(text="Система регистрации • Ink Game")
-    embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
 # Слеш-команда сброса (только для админов)
-
-@bot.tree.command(name="restore", description="Восстановить данные из файла (админы)")
-@app_commands.default_permissions(administrator=True)
-async def restore(interaction: discord.Interaction):
-    """Восстанавливает данные из файла"""
-    # Сразу отправляем ответ, чтобы взаимодействие не истекло
-    await interaction.response.defer(ephemeral=False)
-    
-    embed = discord.Embed(
-        title="🔄 ВОССТАНОВЛЕНИЕ ДАННЫХ",
-        description="Для восстановления данных отправьте файл бэкапа в следующем сообщении\n\n**Поддерживаемые форматы:**\n- `backup_ДД.ММ.ГГГГ.json`\n- Любой .json файл с данными игры",
-        color=0xff0000
-    )
-    embed.add_field(
-        name="⚠️ Внимание",
-        value="Текущие данные будут полностью заменены!",
-        inline=False
-    )
-    
-    instruction_msg = await interaction.followup.send(embed=embed)
-
-    def check(message):
-        return (message.author == interaction.user and 
-                message.channel == interaction.channel and
-                message.attachments and
-                message.attachments[0].filename.endswith('.json'))
-
-    try:
-        msg = await bot.wait_for('message', timeout=120.0, check=check)
-        attachment = msg.attachments[0]
-        
-        # Уведомляем о начале обработки
-        processing_embed = discord.Embed(
-            title="⏳ ОБРАБОТКА ФАЙЛА",
-            description="Файл получен, начинаю обработку...",
-            color=0xff0000
-        )
-        await interaction.followup.send(embed=processing_embed)
-
-        # Скачиваем файл
-        backup_filename = f"restore_{interaction.id}.json"
-        await attachment.save(backup_filename)
-        
-        # Загружаем данные из файла с обработкой ошибок
-        try:
-            with open(backup_filename, 'r', encoding='utf-8') as f:
-                backup_data = json.load(f)
-        except Exception as e:
-            error_embed = discord.Embed(
-                title="❌ ОШИБКА ФАЙЛА",
-                description=f"Не удалось прочитать файл: {str(e)}",
-                color=0xff0000
-            )
-            await interaction.followup.send(embed=error_embed)
-            return
-
-        # Восстанавливаем данные с проверкой структуры
-        try:
-            # Очищаем текущие данные
-            CONFIG['used_numbers'].clear()
-            CONFIG['registered_players'].clear()
-            CONFIG['player_numbers'].clear()
-            
-            # Восстанавливаем used_numbers
-            if 'used_numbers' in backup_data:
-                CONFIG['used_numbers'] = set(backup_data['used_numbers'])
-            else:
-                # Если старого формата, создаем из player_numbers
-                for user_id, number_str in backup_data.get('player_numbers', {}).items():
-                    try:
-                        number_int = int(number_str)
-                        CONFIG['used_numbers'].add(number_int)
-                    except (ValueError, TypeError):
-                        continue
-            
-            # Восстанавливаем registered_players
-            if 'registered_players' in backup_data:
-                CONFIG['registered_players'] = set(backup_data['registered_players'])
-            else:
-                # Если старого формата, создаем из ключей player_numbers
-                CONFIG['registered_players'] = set(backup_data.get('player_numbers', {}).keys())
-            
-            # Восстанавливаем player_numbers с преобразованием ключей
-            if 'player_numbers' in backup_data:
-                CONFIG['player_numbers'] = {}
-                for user_id_str, number_str in backup_data['player_numbers'].items():
-                    try:
-                        user_id = int(user_id_str)
-                        CONFIG['player_numbers'][user_id] = number_str
-                    except (ValueError, TypeError):
-                        continue
-            
-            # Восстанавливаем флаги
-            CONFIG['registration_open'] = backup_data.get('registration_open', False)
-            CONFIG['game_active'] = backup_data.get('game_active', False)
-            
-            # Сохраняем данные
-            save_data()
-            
-        except Exception as e:
-            error_embed = discord.Embed(
-                title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
-                description=f"Не удалось восстановить структуру данных: {str(e)}",
-                color=0xff0000
-            )
-            await interaction.followup.send(embed=error_embed)
-            return
-        
-        # Публичное сообщение о успешном восстановлении
-        success_embed = discord.Embed(
-            title="✅ ДАННЫЕ ВОССТАНОВЛЕНЫ",
-            description=f"Данные игры успешно восстановлены из резервной копии",
-            color=0x00ff00
-        )
-        success_embed.add_field(
-            name="📊 Восстановлено",
-            value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}```",
-            inline=True
-        )
-        success_embed.add_field(
-            name="👤 Восстановил",
-            value=f"```{interaction.user.display_name}```",
-            inline=True
-        )
-        success_embed.add_field(
-            name="📁 Файл",
-            value=f"```{attachment.filename}```",
-            inline=False
-        )
-        
-        if 'backup_created_at' in backup_data:
-            success_embed.add_field(
-                name="📅 Дата бэкапа",
-                value=f"```{backup_data['backup_created_at']}```",
-                inline=False
-            )
-        
-        await interaction.followup.send(embed=success_embed)
-        
-        # Удаляем временный файл
-        import os
-        if os.path.exists(backup_filename):
-            os.remove(backup_filename)
-        
-    except asyncio.TimeoutError:
-        timeout_embed = discord.Embed(
-            title="⏰ ВРЕМЯ ВЫШЛО",
-            description="Время ожидания файла истекло",
-            color=0xff0000
-        )
-        await interaction.followup.send(embed=timeout_embed)
-    except Exception as e:
-        error_embed = discord.Embed(
-            title="❌ ОШИБКА",
-            description=f"Произошла непредвиденная ошибка: {str(e)}",
-            color=0xff0000
-        )
-        await interaction.followup.send(embed=error_embed)
-
-@bot.tree.command(name="backup_info", description="Информация о системе бэкапов")
-async def backup_info(interaction: discord.Interaction):
-    """Информация о системе резервного копирования"""
-    embed = discord.Embed(
-        title="💾 СИСТЕМА БЭКАПОВ",
-        color=0xff0000
-    )
-    
-    embed.add_field(
-        name="📊 Текущая статистика",
-        value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}\nСтатус: {'🟢 Активна' if CONFIG['game_active'] else '🔴 Неактивна'}```",
-        inline=False
-    )
-    
-    embed.add_field(
-        name="🔄 Команды бэкапов",
-        value=(
-            "`/backup` - Создать резервную копию (админы)\n"
-            "`/restore` - Восстановить из бэкапа (админы)\n"
-            "`/backup_info` - Эта информация\n"
-            "`/save` - Быстрое сохранение (админы)"
-        ),
-        inline=False
-    )
-    
-    embed.add_field(
-        name="💡 Рекомендации",
-        value=(
-            "• Делайте бэкапы перед обновлениями\n"
-            "• Храните несколько версий бэкапов\n"
-            "• Регулярно проверяйте целостность данных"
-        ),
-        inline=False
-    )
-    
-    if interaction.user.guild_permissions.administrator:
-        embed.add_field(
-            name="⚙️ Для администраторов",
-            value=(
-                "Бэкапы создаются в формате: `backup_ДД.ММ.ГГГГ.json`\n"
-                "Все данные автоматически сохраняются при изменениях"
-            ),
-            inline=False
-        )
-    
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="backup", description="Создать резервную копию данных (админы)")
-@app_commands.default_permissions(administrator=True)
-async def backup(interaction: discord.Interaction):
-    """Создает резервную копию данных для всех"""
-    if not CONFIG['registered_players']:
-        embed = discord.Embed(
-            title="💾 РЕЗЕРВНАЯ КОПИЯ",
-            description="Нет данных для резервного копирования",
-            color=0xff0000
-        )
-        await interaction.response.send_message(embed=embed)
-        return
-    
-    # Создаем файл с текущей датой
-    import datetime
-    current_date = datetime.datetime.now().strftime("%d.%m.%Y")
-    filename = f"backup_{current_date}.json"
-    
-    # Сохраняем данные в файл
-    backup_data = {
-        'used_numbers': list(CONFIG['used_numbers']),
-        'registered_players': list(CONFIG['registered_players']),
-        'player_numbers': CONFIG['player_numbers'],
-        'registration_open': CONFIG['registration_open'],
-        'game_active': CONFIG['game_active'],
-        'backup_created_at': str(datetime.datetime.now()),
-        'backup_created_by': f"{interaction.user.display_name} ({interaction.user.id})",
-        'total_players': len(CONFIG['registered_players'])
-    }
-    
-    try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(backup_data, f, indent=2, ensure_ascii=False, default=str)
-        
-        # Создаем информационное сообщение для всех
-        embed = discord.Embed(
-            title="💾 РЕЗЕРВНАЯ КОПИЯ СОЗДАНА",
-            description=f"Резервная копия данных игры успешно создана",
-            color=0x00ff00
-        )
-        embed.add_field(
-            name="📊 Статистика",
-            value=f"```Игроков: {len(CONFIG['registered_players'])}\nНомеров: {len(CONFIG['used_numbers'])}\nДата: {current_date}```",
-            inline=True
-        )
-        embed.add_field(
-            name="👤 Создал",
-            value=f"```{interaction.user.display_name}```",
-            inline=True
-        )
-        embed.add_field(
-            name="📁 Файл",
-            value=f"```{filename}```",
-            inline=False
-        )
-        embed.set_footer(text="Резервная копия создана автоматически")
-        
-        # Отправляем сообщение для всех и прикрепляем файл
-        file = discord.File(filename, filename=filename)
-        await interaction.response.send_message(embed=embed, file=file)
-        
-        # Удаляем временный файл после отправки
-        import os
-        os.remove(filename)
-        
-    except Exception as e:
-        embed = discord.Embed(
-            title="❌ ОШИБКА СОЗДАНИЯ БЭКАПА",
-            description=f"Не удалось создать резервную копию: {str(e)}",
-            color=0xff0000
-        )
-        await interaction.response.send_message(embed=embed)
-
 @bot.tree.command(name="reset", description="Сбросить регистрацию конкретного игрока (только для админов)")
 @app_commands.default_permissions(administrator=True)
 async def reset(interaction: discord.Interaction, игрок: discord.Member):
@@ -1060,6 +1141,11 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
     # Удаляем игрока из зарегистрированных
     CONFIG['registered_players'].discard(игрок.id)
     CONFIG['player_numbers'].pop(игрок.id, None)
+    # УДАЛЯЕМ ТИТУЛ
+    CONFIG['player_titles'].pop(игрок.id, None)
+    # УДАЛЯЕМ ИЗ ПОРЯДКА РЕГИСТРАЦИИ
+    if игрок.id in CONFIG['registration_order']:
+        CONFIG['registration_order'].remove(игрок.id)
     
     # Сохраняем изменения
     save_data()
@@ -1223,6 +1309,8 @@ async def end(interaction: discord.Interaction):
         CONFIG['used_numbers'].clear()
         CONFIG['registered_players'].clear()
         CONFIG['player_numbers'].clear()
+        CONFIG['player_titles'].clear()
+        CONFIG['registration_order'].clear()
         
         # Сохраняем изменения
         save_data()
@@ -1439,7 +1527,3 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
-
-
-
-
