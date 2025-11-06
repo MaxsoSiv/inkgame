@@ -38,8 +38,10 @@ CONFIG = {
     'player_numbers': {},
     'registration_open': False,
     'game_active': False,
-    'player_titles': {},  # Новое: титулы игроков
-    'registration_order': []  # Новое: порядок регистрации для лидерборда
+    'player_titles': {},  # {user_id: {'owned': [title1, title2], 'equipped': title}}
+    'registration_order': [],
+    'leaderboard_message_id': None,
+    'leaderboard_channel_id': None
 }
 
 # Доступные титулы и их цвета
@@ -108,10 +110,12 @@ def save_data():
             'player_numbers': CONFIG['player_numbers'],
             'registration_open': CONFIG['registration_open'],
             'game_active': CONFIG['game_active'],
-            'player_titles': CONFIG['player_titles'],  # Сохраняем титулы
-            'registration_order': CONFIG['registration_order'],  # Сохраняем порядок регистрации
+            'player_titles': CONFIG['player_titles'],
+            'registration_order': CONFIG['registration_order'],
+            'leaderboard_message_id': CONFIG['leaderboard_message_id'],
+            'leaderboard_channel_id': CONFIG['leaderboard_channel_id'],
             'saved_at': str(datetime.datetime.now()),
-            'version': '1.1'  # Обновляем версию
+            'version': '1.2'
         }
         
         # Сначала сохраняем во временный файл
@@ -174,23 +178,36 @@ def load_data():
                     logger.warning(f"⚠️ Неверный user_id в данных: {user_id_str}")
                     continue
         
-        # Загружаем player_titles (новая функция)
+        # Загружаем player_titles с преобразованием старого формата
         if 'player_titles' in data:
             CONFIG['player_titles'] = {}
-            for user_id_str, title in data['player_titles'].items():
+            for user_id_str, title_data in data['player_titles'].items():
                 try:
                     user_id = int(user_id_str)
-                    CONFIG['player_titles'][user_id] = title
+                    # Если старый формат (просто строка), преобразуем в новый
+                    if isinstance(title_data, str):
+                        CONFIG['player_titles'][user_id] = {
+                            'owned': [title_data],
+                            'equipped': title_data
+                        }
+                    else:
+                        # Новый формат
+                        CONFIG['player_titles'][user_id] = title_data
                 except (ValueError, TypeError):
                     logger.warning(f"⚠️ Неверный user_id в данных титулов: {user_id_str}")
                     continue
         
-        # Загружаем registration_order (новая функция)
+        # Загружаем registration_order
         if 'registration_order' in data:
             CONFIG['registration_order'] = data['registration_order']
         else:
-            # Для совместимости со старыми версиями
             CONFIG['registration_order'] = list(CONFIG['registered_players'])
+        
+        # Загружаем лидерборд
+        if 'leaderboard_message_id' in data:
+            CONFIG['leaderboard_message_id'] = data['leaderboard_message_id']
+        if 'leaderboard_channel_id' in data:
+            CONFIG['leaderboard_channel_id'] = data['leaderboard_channel_id']
         
         # Загружаем флаги
         if 'registration_open' in data:
@@ -212,10 +229,11 @@ def load_data():
         CONFIG['player_numbers'].clear()
         CONFIG['player_titles'].clear()
         CONFIG['registration_order'].clear()
+        CONFIG['leaderboard_message_id'] = None
+        CONFIG['leaderboard_channel_id'] = None
         CONFIG['registration_open'] = False
         CONFIG['game_active'] = False
         return False
-
 @bot.event
 async def on_ready():
     logger.info(f'✅ Бот {bot.user} запущен!')
@@ -291,6 +309,85 @@ async def get_user_balance(guild_id: int, user_id: int):
     except Exception as e:
         return False, f"Ошибка соединения: {e}"
 
+async def update_leaderboard():
+    """Обновляет сообщение лидерборда"""
+    if not CONFIG['leaderboard_message_id'] or not CONFIG['leaderboard_channel_id']:
+        return
+    
+    try:
+        channel = bot.get_channel(CONFIG['leaderboard_channel_id'])
+        if not channel:
+            logger.warning("❌ Канал лидерборда не найден")
+            return
+        
+        message = await channel.fetch_message(CONFIG['leaderboard_message_id'])
+        
+        embed = await create_leaderboard_embed()
+        await message.edit(embed=embed)
+        logger.info("✅ Лидерборд обновлен")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка обновления лидерборда: {e}")
+
+async def create_leaderboard_embed(page: int = 1):
+    """Создает embed для лидерборда"""
+    if not CONFIG['registration_order']:
+        return discord.Embed(
+            title="📊 ЛИДЕРБОРД",
+            description="Пока нет зарегистрированных игроков",
+            color=0xff0000
+        )
+    
+    # Проверяем валидность страницы
+    total_pages = (len(CONFIG['registration_order']) + 9) // 10
+    if page < 1 or page > total_pages:
+        page = 1
+    
+    embed = discord.Embed(
+        title="📊 ЛИДЕРБОРД",
+        description="Игроки в порядке регистрации",
+        color=0xff0000
+    )
+    
+    # Вычисляем диапазон игроков для текущей страницы
+    start_index = (page - 1) * 10
+    end_index = min(start_index + 10, len(CONFIG['registration_order']))
+    
+    leaderboard_text = ""
+    
+    for i in range(start_index, end_index):
+        user_id = CONFIG['registration_order'][i]
+        user = bot.get_user(user_id)
+        player_number = CONFIG['player_numbers'].get(user_id, "???")
+        
+        if user:
+            # Получаем надетый титул игрока
+            equipped_title = None
+            if user_id in CONFIG['player_titles']:
+                equipped_title = CONFIG['player_titles'][user_id].get('equipped')
+            
+            if equipped_title:
+                # Создаем цветной текст для титула
+                title_color = AVAILABLE_TITLES.get(equipped_title, 0xff0000)
+                # Используем кодовые блоки с CSS-подобным синтаксисом для цвета (это не сработает в Discord)
+                # Вместо этого используем emoji или просто текст
+                leaderboard_text += f"`#{i+1:2d}` **{equipped_title}** {user.display_name} ({player_number})\n"
+            else:
+                leaderboard_text += f"`#{i+1:2d}` {user.display_name} ({player_number})\n"
+        else:
+            leaderboard_text += f"`#{i+1:2d}` Unknown User ({player_number})\n"
+    
+    embed.add_field(
+        name=f"🎮 Игроки ({start_index + 1}-{end_index})",
+        value=leaderboard_text or "Нет данных",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Страница {page}/{total_pages} • Лидерборд • Ink Game")
+    embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
+    
+    return embed
+
 # ==================== УЛУЧШЕННАЯ ОБРАБОТКА КОМАНД ====================
 
 async def safe_send_response(interaction, *args, **kwargs):
@@ -337,8 +434,11 @@ async def safe_defer_response(interaction, *args, **kwargs):
 async def titles(interaction: discord.Interaction):
     """Показывает доступные титулы для покупки"""
     try:
-        # Немедленно отвечаем на взаимодействие
         await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        
+        # Получаем купленные титулы пользователя
+        user_titles = CONFIG['player_titles'].get(interaction.user.id, {'owned': [], 'equipped': None})
+        owned_titles = user_titles['owned']
         
         embed = discord.Embed(
             title="🏆 МАГАЗИН ТИТУЛОВ",
@@ -350,8 +450,11 @@ async def titles(interaction: discord.Interaction):
             price = TITLE_PRICES[title]
             price_text = "🎁 Бесплатно (выдается админами)" if price == 0 else f"💵 {price:,}$"
             
+            # Проверяем, куплен ли титул
+            status = "✅ Куплен" if title in owned_titles else "🛒 Доступен"
+            
             embed.add_field(
-                name=f"**{title}**",
+                name=f"**{title}** - {status}",
                 value=f"Цвет: {color}\nЦена: {price_text}",
                 inline=True
             )
@@ -363,8 +466,14 @@ async def titles(interaction: discord.Interaction):
         )
         
         embed.add_field(
-            name="ℹ️ Информация",
-            value="Титулы отображаются рядом с вашим ником в `/leaderboard`",
+            name="🎒 Инвентарь",
+            value="Используйте `/inv` для просмотра ваших титулов",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="👑 Надеть титул",
+            value="Используйте `/equip <титул>` чтобы надеть титул",
             inline=False
         )
         
@@ -376,6 +485,173 @@ async def titles(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"❌ Ошибка в команде titles: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при выполнении команды", ephemeral=True)
+
+@bot.tree.command(name="equip", description="Надеть титул из инвентаря")
+async def equip(interaction: discord.Interaction, название_титула: str):
+    """Надевает титул из инвентаря"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        user_id = interaction.user.id
+        
+        if user_id not in CONFIG['player_titles']:
+            embed = discord.Embed(
+                title="❌ Ошибка",
+                description="У вас нет титулов",
+                color=0xff0000
+            )
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        user_titles = CONFIG['player_titles'][user_id]
+        
+        if название_титула not in user_titles['owned']:
+            embed = discord.Embed(
+                title="❌ Ошибка",
+                description="У вас нет этого титула",
+                color=0xff0000
+            )
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        # Надеваем титул
+        user_titles['equipped'] = название_титула
+        save_data()
+        
+        # Обновляем лидерборд
+        await update_leaderboard()
+        
+        embed = discord.Embed(
+            title="👑 ТИТУЛ НАДЕТ",
+            description=f"Вы надели титул **{название_титула}**!",
+            color=AVAILABLE_TITLES.get(название_титула, 0xff0000)
+        )
+        
+        embed.add_field(
+            name="👀 Просмотр",
+            value="Теперь ваш титул отображается в `/leaderboard`",
+            inline=False
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде equip: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при надевании титула", ephemeral=True)
+
+@bot.tree.command(name="inv", description="Показать инвентарь титулов")
+async def inv(interaction: discord.Interaction):
+    """Показывает инвентарь титулов"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        user_id = interaction.user.id
+        
+        if user_id not in CONFIG['player_titles'] or not CONFIG['player_titles'][user_id]['owned']:
+            embed = discord.Embed(
+                title="🎒 ИНВЕНТАРЬ ТИТУЛОВ",
+                description="У вас пока нет титулов. Используйте `/titles` для покупки.",
+                color=0xff0000
+            )
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        user_titles = CONFIG['player_titles'][user_id]
+        owned_titles = user_titles['owned']
+        equipped_title = user_titles['equipped']
+        
+        embed = discord.Embed(
+            title="🎒 ИНВЕНТАРЬ ТИТУЛОВ",
+            description=f"Всего титулов: {len(owned_titles)}",
+            color=0xff0000
+        )
+        
+        # Показываем надетый титул
+        if equipped_title:
+            embed.add_field(
+                name="👑 Надетый титул",
+                value=f"**{equipped_title}**",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="👑 Надетый титул",
+                value="❌ Нет надетого титула",
+                inline=False
+            )
+        
+        # Показываем все титулы
+        titles_text = ""
+        for title in owned_titles:
+            status = "👑" if title == equipped_title else "✅"
+            titles_text += f"{status} **{title}**\n"
+        
+        embed.add_field(
+            name="📜 Ваши титулы",
+            value=titles_text or "Нет титулов",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="👑 Надеть титул",
+            value="Используйте `/equip <название_титула>` чтобы надеть титул",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="❌ Снять титул",
+            value="Используйте `/unequip` чтобы снять текущий титул",
+            inline=False
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде inv: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе инвентаря", ephemeral=True)
+
+@bot.tree.command(name="unequip", description="Снять текущий титул")
+async def unequip(interaction: discord.Interaction):
+    """Снимает текущий титул"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        user_id = interaction.user.id
+        
+        if user_id not in CONFIG['player_titles'] or CONFIG['player_titles'][user_id]['equipped'] is None:
+            embed = discord.Embed(
+                title="❌ Ошибка",
+                description="У вас нет надетого титула",
+                color=0xff0000
+            )
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        # Снимаем титул
+        old_title = CONFIG['player_titles'][user_id]['equipped']
+        CONFIG['player_titles'][user_id]['equipped'] = None
+        save_data()
+        
+        # Обновляем лидерборд
+        await update_leaderboard()
+        
+        embed = discord.Embed(
+            title="❌ ТИТУЛ СНЯТ",
+            description=f"Вы сняли титул **{old_title}**",
+            color=0xff0000
+        )
+        
+        embed.add_field(
+            name="💡 Информация",
+            value="Теперь в лидерборде ваш титул не отображается",
+            inline=False
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде unequip: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при снятии титула", ephemeral=True)
 
 @bot.tree.command(name="buy", description="Купить титул")
 async def buy(interaction: discord.Interaction, название_титула: str):
@@ -397,8 +673,15 @@ async def buy(interaction: discord.Interaction, название_титула: s
             await safe_edit_response(interaction, embed=embed)
             return
         
+        # Получаем текущие титулы пользователя
+        user_id = interaction.user.id
+        if user_id not in CONFIG['player_titles']:
+            CONFIG['player_titles'][user_id] = {'owned': [], 'equipped': None}
+        
+        user_titles = CONFIG['player_titles'][user_id]
+        
         # Проверяем, не куплен ли уже титул
-        if interaction.user.id in CONFIG['player_titles'] and CONFIG['player_titles'][interaction.user.id] == название_титула:
+        if название_титула in user_titles['owned']:
             embed = discord.Embed(
                 title="❌ Ошибка",
                 description="У вас уже есть этот титул!",
@@ -410,7 +693,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
         price = TITLE_PRICES[название_титула]
         
         # Проверяем баланс
-        success, balance_data = await get_user_balance(interaction.guild.id, interaction.user.id)
+        success, balance_data = await get_user_balance(interaction.guild.id, user_id)
         
         if not success:
             embed = discord.Embed(
@@ -434,7 +717,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
         
         # Списываем деньги (если титул не бесплатный)
         if price > 0:
-            success, message = await add_money_to_user(interaction.guild.id, interaction.user.id, -price)
+            success, message = await add_money_to_user(interaction.guild.id, user_id, -price)
             if not success:
                 embed = discord.Embed(
                     title="❌ Ошибка оплаты",
@@ -444,9 +727,17 @@ async def buy(interaction: discord.Interaction, название_титула: s
                 await safe_edit_response(interaction, embed=embed)
                 return
         
-        # Выдаем титул
-        CONFIG['player_titles'][interaction.user.id] = название_титула
+        # Добавляем титул в инвентарь
+        user_titles['owned'].append(название_титула)
+        
+        # Если это первый титул, автоматически надеваем его
+        if user_titles['equipped'] is None:
+            user_titles['equipped'] = название_титула
+        
         save_data()
+        
+        # Обновляем лидерборд
+        await update_leaderboard()
         
         # Сообщение об успехе
         embed = discord.Embed(
@@ -466,6 +757,19 @@ async def buy(interaction: discord.Interaction, название_титула: s
             name="🎨 Цвет",
             value=f"```{AVAILABLE_TITLES[название_титула]}```",
             inline=True
+        )
+        
+        if user_titles['equipped'] == название_титула:
+            embed.add_field(
+                name="👑 Статус",
+                value="Титул автоматически надет",
+                inline=True
+            )
+        
+        embed.add_field(
+            name="🎒 Инвентарь",
+            value=f"Теперь у вас {len(user_titles['owned'])} титулов",
+            inline=False
         )
         
         embed.add_field(
@@ -488,61 +792,7 @@ async def leaderboard(interaction: discord.Interaction, страница: int = 
     try:
         await safe_defer_response(interaction, ephemeral=False, thinking=True)
         
-        if not CONFIG['registration_order']:
-            embed = discord.Embed(
-                title="📊 ЛИДЕРБОРД",
-                description="Пока нет зарегистрированных игроков",
-                color=0xff0000
-            )
-            await safe_edit_response(interaction, embed=embed)
-            return
-        
-        # Проверяем валидность страницы
-        total_pages = (len(CONFIG['registration_order']) + 9) // 10
-        if страница < 1 or страница > total_pages:
-            embed = discord.Embed(
-                title="❌ Ошибка",
-                description=f"Доступны страницы от 1 до {total_pages}",
-                color=0xff0000
-            )
-            await safe_edit_response(interaction, embed=embed)
-            return
-        
-        embed = discord.Embed(
-            title="📊 ЛИДЕРБОРД",
-            description="Игроки в порядке регистрации",
-            color=0xff0000
-        )
-        
-        # Вычисляем диапазон игроков для текущей страницы
-        start_index = (страница - 1) * 10
-        end_index = min(start_index + 10, len(CONFIG['registration_order']))
-        
-        leaderboard_text = ""
-        
-        for i in range(start_index, end_index):
-            user_id = CONFIG['registration_order'][i]
-            user = bot.get_user(user_id)
-            player_number = CONFIG['player_numbers'].get(user_id, "???")
-            
-            if user:
-                # Получаем титул игрока
-                title = CONFIG['player_titles'].get(user_id)
-                title_text = f"**{title}** " if title else ""
-                
-                leaderboard_text += f"`#{i+1:2d}` {title_text}{user.display_name} ({player_number})\n"
-            else:
-                leaderboard_text += f"`#{i+1:2d}` Unknown User ({player_number})\n"
-        
-        embed.add_field(
-            name=f"🎮 Игроки ({start_index + 1}-{end_index})",
-            value=leaderboard_text or "Нет данных",
-            inline=False
-        )
-        
-        embed.set_footer(text=f"Страница {страница}/{total_pages} • Лидерборд • Ink Game")
-        embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
-        
+        embed = await create_leaderboard_embed(страница)
         await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
@@ -560,9 +810,24 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
             return
         
-        # Выдаем титул (теперь можно выдавать даже незарегистрированным)
-        CONFIG['player_titles'][игрок.id] = "Контент Креэйтор"
+        user_id = игрок.id
+        
+        # Создаем запись если нет
+        if user_id not in CONFIG['player_titles']:
+            CONFIG['player_titles'][user_id] = {'owned': [], 'equipped': None}
+        
+        user_titles = CONFIG['player_titles'][user_id]
+        
+        # Добавляем титул если его нет
+        if "Контент Креэйтор" not in user_titles['owned']:
+            user_titles['owned'].append("Контент Креэйтор")
+        
+        # Надеваем титул
+        user_titles['equipped'] = "Контент Креэйтор"
         save_data()
+        
+        # Обновляем лидерборд
+        await update_leaderboard()
         
         embed = discord.Embed(
             title="🎁 ТИТУЛ ВЫДАН",
@@ -589,6 +854,63 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
     except Exception as e:
         logger.error(f"❌ Ошибка в команде cc: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при выдаче титула", ephemeral=True)
+
+
+
+@bot.tree.command(name="set_leaderboard", description="Установить сообщение лидерборда (админы)")
+@app_commands.default_permissions(administrator=True)
+async def set_leaderboard(interaction: discord.Interaction):
+    """Устанавливает сообщение лидерборда"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        # Создаем лидерборд
+        embed = await create_leaderboard_embed()
+        message = await interaction.channel.send(embed=embed)
+        
+        # Сохраняем ID сообщения и канала
+        CONFIG['leaderboard_message_id'] = message.id
+        CONFIG['leaderboard_channel_id'] = interaction.channel.id
+        save_data()
+        
+        embed = discord.Embed(
+            title="✅ ЛИДЕРБОРД УСТАНОВЛЕН",
+            description="Сообщение лидерборда успешно установлено!",
+            color=0x00ff00
+        )
+        
+        embed.add_field(
+            name="📊 Автообновление",
+            value="Лидерборд будет автоматически обновляться при:\n• Регистрации новых игроков\n• Покупке титулов\n• Смене титулов",
+            inline=False
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде set_leaderboard: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при установке лидерборда", ephemeral=True)
+
+@bot.tree.command(name="update_leaderboard", description="Обновить лидерборд вручную (админы)")
+@app_commands.default_permissions(administrator=True)
+async def update_leaderboard_cmd(interaction: discord.Interaction):
+    """Обновляет лидерборд вручную"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        await update_leaderboard()
+        
+        embed = discord.Embed(
+            title="✅ ЛИДЕРБОРД ОБНОВЛЕН",
+            description="Лидерборд успешно обновлен!",
+            color=0x00ff00
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде update_leaderboard: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при обновлении лидерборда", ephemeral=True)
 
 @bot.tree.command(name="mytitle", description="Показать ваш текущий титул")
 async def mytitle(interaction: discord.Interaction):
@@ -762,6 +1084,9 @@ async def reg(interaction: discord.Interaction):
         # Сохраняем изменения
         save_data()
         
+        # Обновляем лидерборд
+        await update_leaderboard()
+        
         # Поиск роли
         registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
         
@@ -840,6 +1165,56 @@ async def reg(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"❌ Ошибка в команде reg: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при регистрации", ephemeral=True)
+
+@bot.tree.command(name="mytitle", description="Показать ваш текущий титул")
+async def mytitle(interaction: discord.Interaction):
+    """Показывает текущий титул игрока"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        
+        user_id = interaction.user.id
+        
+        if user_id not in CONFIG['player_titles'] or CONFIG['player_titles'][user_id]['equipped'] is None:
+            embed = discord.Embed(
+                title="🏆 ВАШ ТИТУЛ",
+                description="У вас пока нет надетого титула. Используйте `/titles` для покупки и `/equip` для надевания.",
+                color=0xff0000
+            )
+            await safe_edit_response(interaction, embed=embed)
+            return
+        
+        equipped_title = CONFIG['player_titles'][user_id]['equipped']
+        color = AVAILABLE_TITLES.get(equipped_title, 0xff0000)
+        
+        embed = discord.Embed(
+            title="🏆 ВАШ ТИТУЛ",
+            description=f"**{equipped_title}**",
+            color=color
+        )
+        
+        embed.add_field(
+            name="🎨 Цвет",
+            value=f"```{color}```",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="👀 Просмотр",
+            value="Ваш титул отображается в `/leaderboard`",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎒 Всего титулов",
+            value=f"```{len(CONFIG['player_titles'][user_id]['owned'])}```",
+            inline=True
+        )
+        
+        await safe_edit_response(interaction, embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде mytitle: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при показе титула", ephemeral=True)
 
 @bot.tree.command(name="status", description="Проверить статус регистрации")
 async def status(interaction: discord.Interaction):
