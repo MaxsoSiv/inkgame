@@ -12,6 +12,7 @@ import threading
 from typing import Optional, cast
 from dotenv import load_dotenv
 from flask import Flask
+import datetime
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -1670,3 +1671,4 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
