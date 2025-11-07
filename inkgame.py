@@ -13,6 +13,7 @@ from typing import Optional, cast
 from dotenv import load_dotenv
 from flask import Flask
 import datetime
+import json
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -213,6 +214,117 @@ def load_data():
         CONFIG['leaderboard_channel_id'] = None
         CONFIG['registration_open'] = False
         CONFIG['game_active'] = False
+        return False
+
+# ==================== СИСТЕМА БЭКАПА И ВОССТАНОВЛЕНИЯ ====================
+
+def create_backup_file():
+    """Создает файл резервной копии и возвращает его имя"""
+    try:
+        # Создаем данные для бэкапа
+        backup_data = {
+            'used_numbers': list(CONFIG['used_numbers']),
+            'registered_players': list(CONFIG['registered_players']),
+            'player_numbers': CONFIG['player_numbers'],
+            'registration_open': CONFIG['registration_open'],
+            'game_active': CONFIG['game_active'],
+            'player_titles': CONFIG['player_titles'],
+            'registration_order': CONFIG['registration_order'],
+            'leaderboard_message_id': CONFIG['leaderboard_message_id'],
+            'leaderboard_channel_id': CONFIG['leaderboard_channel_id'],
+            'backup_created_at': str(datetime.datetime.now()),
+            'version': '1.3',
+            'total_players': len(CONFIG['registered_players']),
+            'total_titles': len(CONFIG['player_titles'])
+        }
+        
+        # Создаем временный файл
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"game_backup_{timestamp}.json"
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(backup_data, f, indent=2, ensure_ascii=False, default=str)
+        
+        return filename
+    except Exception as e:
+        logger.error(f"❌ Ошибка создания файла бэкапа: {e}")
+        return None
+
+def restore_from_backup(backup_data):
+    """Восстанавливает данные из бэкапа"""
+    try:
+        # Сохраняем текущие данные как резервную копию перед восстановлением
+        save_data_with_backup()
+        
+        # Очищаем текущие данные
+        CONFIG['used_numbers'].clear()
+        CONFIG['registered_players'].clear()
+        CONFIG['player_numbers'].clear()
+        CONFIG['player_titles'].clear()
+        CONFIG['registration_order'].clear()
+        
+        # Восстанавливаем used_numbers
+        if 'used_numbers' in backup_data:
+            CONFIG['used_numbers'] = set(backup_data['used_numbers'])
+        
+        # Восстанавливаем registered_players
+        if 'registered_players' in backup_data:
+            CONFIG['registered_players'] = set(backup_data['registered_players'])
+        
+        # Восстанавливаем player_numbers
+        if 'player_numbers' in backup_data:
+            CONFIG['player_numbers'] = {}
+            for user_id_str, number_str in backup_data['player_numbers'].items():
+                try:
+                    user_id = int(user_id_str)
+                    CONFIG['player_numbers'][user_id] = number_str
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Неверный user_id в бэкапе: {user_id_str}")
+                    continue
+        
+        # Восстанавливаем player_titles
+        if 'player_titles' in backup_data:
+            CONFIG['player_titles'] = {}
+            for user_id_str, title_data in backup_data['player_titles'].items():
+                try:
+                    user_id = int(user_id_str)
+                    if isinstance(title_data, str):
+                        CONFIG['player_titles'][user_id] = {
+                            'owned': [title_data],
+                            'equipped': title_data
+                        }
+                    else:
+                        CONFIG['player_titles'][user_id] = title_data
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Неверный user_id в бэкапе титулов: {user_id_str}")
+                    continue
+        
+        # Восстанавливаем registration_order
+        if 'registration_order' in backup_data:
+            CONFIG['registration_order'] = backup_data['registration_order']
+        else:
+            CONFIG['registration_order'] = list(CONFIG['registered_players'])
+        
+        # Восстанавливаем лидерборд
+        if 'leaderboard_message_id' in backup_data:
+            CONFIG['leaderboard_message_id'] = backup_data['leaderboard_message_id']
+        if 'leaderboard_channel_id' in backup_data:
+            CONFIG['leaderboard_channel_id'] = backup_data['leaderboard_channel_id']
+        
+        # Восстанавливаем флаги
+        if 'registration_open' in backup_data:
+            CONFIG['registration_open'] = backup_data['registration_open']
+        if 'game_active' in backup_data:
+            CONFIG['game_active'] = backup_data['game_active']
+        
+        # Сохраняем восстановленные данные
+        save_data()
+        
+        logger.info("✅ Данные восстановлены из бэкапа")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка восстановления из бэкапа: {e}")
         return False
 
 @bot.event
@@ -1370,7 +1482,7 @@ async def end(interaction: discord.Interaction):
 async def help_cmd(interaction: discord.Interaction):
     """Показывает справку по командам"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_send_response(interaction, "🔄 Загрузка справки...", ephemeral=True)
         
         embed = discord.Embed(
             title="📚 СПРАВКА ПО КОМАНДАМ",
@@ -1408,13 +1520,15 @@ async def help_cmd(interaction: discord.Interaction):
                     "`/freenumbers` - Свободные номера\n"
                     "`/save` - Сохранить данные\n"
                     "`/load` - Загрузить данные\n"
-                    "`/cc` - Выдать титул Контент Креэйтор"
+                    "`/cc` - Выдать титул Контент Креэйтор\n"
+                    "`/backup` - Создать резервную копию\n"  # ← ДОБАВИТЬ ЭТУ СТРОКУ
+                    "`/restore` - Восстановить из копии"     # ← ДОБАВИТЬ ЭТУ СТРОКУ
                 ),
                 inline=False
             )
         
         embed.set_footer(text="Система регистрации • Ink Game")
-        await safe_edit_response(interaction, embed=embed)
+        await interaction.edit_original_response(embed=embed)
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде help: {e}")
@@ -1544,6 +1658,236 @@ async def changenumber(interaction: discord.Interaction, игрок: discord.Mem
     except Exception as e:
         logger.error(f"❌ Ошибка в команде changenumber: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при изменении номера", ephemeral=True)
+
+@bot.tree.command(name="backup", description="Создать резервную копию данных (админы)")
+@app_commands.default_permissions(administrator=True)
+async def backup(interaction: discord.Interaction):
+    """Создает и отправляет файл с резервной копией данных"""
+    try:
+        await safe_send_response(interaction, "🔄 Создаю резервную копию...", ephemeral=True)
+        
+        # Создаем файл бэкапа
+        filename = create_backup_file()
+        if not filename:
+            await interaction.edit_original_response(content="❌ Не удалось создать резервную копию")
+            return
+        
+        # Создаем embed с информацией о бэкапе
+        embed = discord.Embed(
+            title="💾 РЕЗЕРВНАЯ КОПИЯ СОЗДАНА",
+            description="Файл с резервной копией данных готов к скачиванию",
+            color=0x00ff00
+        )
+        
+        embed.add_field(
+            name="📊 Статистика бэкапа",
+            value=(
+                f"• Игроков: {len(CONFIG['registered_players'])}\n"
+                f"• Номеров: {len(CONFIG['used_numbers'])}\n"
+                f"• Титулов: {len(CONFIG['player_titles'])}\n"
+                f"• Регистрация: {'Открыта' if CONFIG['registration_open'] else 'Закрыта'}\n"
+                f"• Игра: {'Активна' if CONFIG['game_active'] else 'Неактивна'}"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💡 Важная информация",
+            value=(
+                "Сохраните этот файл в надежном месте.\n"
+                "Для восстановления данных используйте команду `/restore`"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Бэкап создан • {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Отправляем файл
+        file = discord.File(filename, filename=filename)
+        await interaction.edit_original_response(embed=embed, attachments=[file])
+        
+        # Удаляем временный файл после отправки
+        await asyncio.sleep(1)
+        if os.path.exists(filename):
+            os.remove(filename)
+            
+        logger.info(f"✅ Резервная копия создана пользователем {interaction.user.display_name}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде backup: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при создании резервной копии", ephemeral=True)
+
+@bot.tree.command(name="restore", description="Восстановить данные из резервной копии (админы)")
+@app_commands.default_permissions(administrator=True)
+async def restore(interaction: discord.Interaction, файл: discord.Attachment):
+    """Восстанавливает данные из файла резервной копии"""
+    try:
+        await safe_send_response(interaction, "🔄 Проверяю файл...", ephemeral=True)
+        
+        # Проверяем что файл JSON
+        if not файл.filename.endswith('.json'):
+            embed = discord.Embed(
+                title="❌ ОШИБКА ФОРМАТА",
+                description="Пожалуйста, загрузите файл в формате JSON",
+                color=0xff0000
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        # Скачиваем файл
+        file_data = await файл.read()
+        
+        try:
+            backup_data = json.loads(file_data.decode('utf-8'))
+        except json.JSONDecodeError:
+            embed = discord.Embed(
+                title="❌ ОШИБКА ЧТЕНИЯ",
+                description="Не удалось прочитать файл. Убедитесь, что это валидный JSON файл.",
+                color=0xff0000
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        # Проверяем структуру данных
+        required_fields = ['used_numbers', 'registered_players', 'player_numbers', 'player_titles']
+        missing_fields = [field for field in required_fields if field not in backup_data]
+        
+        if missing_fields:
+            embed = discord.Embed(
+                title="❌ НЕВЕРНЫЙ ФОРМАТ",
+                description=f"В файле отсутствуют обязательные поля: {', '.join(missing_fields)}",
+                color=0xff0000
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        # Предупреждение о перезаписи
+        warning_embed = discord.Embed(
+            title="⚠️ ПРЕДУПРЕЖДЕНИЕ",
+            description=(
+                "Вы собираетесь восстановить данные из резервной копии.\n\n"
+                "**ВСЕ ТЕКУЩИЕ ДАННЫЕ БУДУТ ПЕРЕЗАПИСАНЫ!**\n\n"
+                "Это действие нельзя отменить.\n"
+                "Пожалуйста, подтвердите восстановление."
+            ),
+            color=0xffa500
+        )
+        
+        warning_embed.add_field(
+            name="📊 Данные для восстановления",
+            value=(
+                f"• Игроков: {len(backup_data.get('registered_players', []))}\n"
+                f"• Номеров: {len(backup_data.get('used_numbers', []))}\n"
+                f"• Титулов: {len(backup_data.get('player_titles', {}))}\n"
+                f"• Версия: {backup_data.get('version', 'Неизвестно')}"
+            ),
+            inline=False
+        )
+        
+        warning_embed.add_field(
+            name="🔄 Действие",
+            value="Нажмите кнопку ниже для подтверждения восстановления",
+            inline=False
+        )
+        
+        # Создаем кнопки подтверждения
+        class RestoreConfirmView(discord.ui.View):
+            def __init__(self, backup_data):
+                super().__init__(timeout=60)
+                self.backup_data = backup_data
+                self.confirmed = False
+            
+            @discord.ui.button(label="✅ Подтвердить восстановление", style=discord.ButtonStyle.danger)
+            async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+                self.confirmed = True
+                await self.perform_restore(interaction)
+                self.stop()
+            
+            @discord.ui.button(label="❌ Отмена", style=discord.ButtonStyle.secondary)
+            async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+                embed = discord.Embed(
+                    title="❌ ВОССТАНОВЛЕНИЕ ОТМЕНЕНО",
+                    description="Действие отменено пользователем",
+                    color=0xff0000
+                )
+                await interaction.response.edit_message(embed=embed, view=None)
+                self.stop()
+            
+            async def perform_restore(self, interaction: discord.Interaction):
+                try:
+                    # Обновляем сообщение о начале восстановления
+                    restoring_embed = discord.Embed(
+                        title="🔄 ВОССТАНОВЛЕНИЕ ДАННЫХ",
+                        description="Идет процесс восстановления...",
+                        color=0xffa500
+                    )
+                    await interaction.response.edit_message(embed=restoring_embed, view=None)
+                    
+                    # Восстанавливаем данные
+                    success = restore_from_backup(self.backup_data)
+                    
+                    if success:
+                        # Обновляем лидерборд
+                        await auto_update_leaderboard()
+                        
+                        # Сообщение об успехе
+                        success_embed = discord.Embed(
+                            title="✅ ДАННЫЕ ВОССТАНОВЛЕНЫ",
+                            description="Все данные успешно восстановлены из резервной копии!",
+                            color=0x00ff00
+                        )
+                        
+                        success_embed.add_field(
+                            name="📊 Восстановленные данные",
+                            value=(
+                                f"• Игроков: {len(CONFIG['registered_players'])}\n"
+                                f"• Номеров: {len(CONFIG['used_numbers'])}\n"
+                                f"• Титулов: {len(CONFIG['player_titles'])}\n"
+                                f"• Регистрация: {'Открыта' if CONFIG['registration_open'] else 'Закрыта'}\n"
+                                f"• Игра: {'Активна' if CONFIG['game_active'] else 'Неактивна'}"
+                            ),
+                            inline=False
+                        )
+                        
+                        success_embed.add_field(
+                            name="💡 Следующие шаги",
+                            value=(
+                                "• Проверьте корректность данных\n"
+                                "• Убедитесь, что лидерборд отображается правильно\n"
+                                "• При необходимости используйте `/update_leaderboard`"
+                            ),
+                            inline=False
+                        )
+                        
+                        success_embed.set_footer(text=f"Восстановлено • {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                        
+                        await interaction.edit_original_response(embed=success_embed)
+                        
+                        logger.info(f"✅ Данные восстановлены пользователем {interaction.user.display_name}")
+                    else:
+                        error_embed = discord.Embed(
+                            title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
+                            description="Не удалось восстановить данные из файла",
+                            color=0xff0000
+                        )
+                        await interaction.edit_original_response(embed=error_embed)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Ошибка при восстановлении данных: {e}")
+                    error_embed = discord.Embed(
+                        title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
+                        description=f"Произошла ошибка при восстановлении: {str(e)}",
+                        color=0xff0000
+                    )
+                    await interaction.edit_original_response(embed=error_embed)
+        
+        # Отправляем предупреждение с кнопками
+        view = RestoreConfirmView(backup_data)
+        await interaction.edit_original_response(embed=warning_embed, view=view)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде restore: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при обработке файла", ephemeral=True)
 
 @bot.tree.command(name="broadcast", description="Сделать объявление для всех игроков (админы)")
 @app_commands.default_permissions(administrator=True)
@@ -1938,3 +2282,4 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
