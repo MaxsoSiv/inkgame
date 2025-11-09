@@ -42,7 +42,8 @@ CONFIG = {
     'player_titles': {},  # {user_id: {'owned': [title1, title2], 'equipped': title}}
     'registration_order': [],
     'leaderboard_message_id': None,
-    'leaderboard_channel_id': None
+    'leaderboard_channel_id': None,
+    'prizes_distributed': False  # Флаг для отслеживания выданных призов
 }
 
 # Доступные титулы (цвета убраны)
@@ -61,6 +62,13 @@ TITLE_PRICES = {
     "Rich": 15000,
     "mastermind": 20000,
     "Контент Креэйтор": 0
+}
+
+# Призы за места
+PRIZES = {
+    1: 15000,
+    2: 10000, 
+    3: 5000
 }
 
 # Токены из переменных окружения
@@ -109,6 +117,7 @@ def save_data():
             'registration_order': CONFIG['registration_order'],
             'leaderboard_message_id': CONFIG['leaderboard_message_id'],
             'leaderboard_channel_id': CONFIG['leaderboard_channel_id'],
+            'prizes_distributed': CONFIG['prizes_distributed'],
             'saved_at': str(datetime.datetime.now()),
             'version': '1.2'
         }
@@ -192,6 +201,11 @@ def load_data():
         if 'leaderboard_channel_id' in data:
             CONFIG['leaderboard_channel_id'] = data['leaderboard_channel_id']
         
+        if 'prizes_distributed' in data:
+            CONFIG['prizes_distributed'] = data['prizes_distributed']
+        else:
+            CONFIG['prizes_distributed'] = False
+        
         if 'registration_open' in data:
             CONFIG['registration_open'] = data['registration_open']
         if 'game_active' in data:
@@ -214,6 +228,7 @@ def load_data():
         CONFIG['leaderboard_channel_id'] = None
         CONFIG['registration_open'] = False
         CONFIG['game_active'] = False
+        CONFIG['prizes_distributed'] = False
         return False
 
 # ==================== СИСТЕМА БЭКАПА И ВОССТАНОВЛЕНИЯ ====================
@@ -232,6 +247,7 @@ def create_backup_file():
             'registration_order': CONFIG['registration_order'],
             'leaderboard_message_id': CONFIG['leaderboard_message_id'],
             'leaderboard_channel_id': CONFIG['leaderboard_channel_id'],
+            'prizes_distributed': CONFIG['prizes_distributed'],
             'backup_created_at': str(datetime.datetime.now()),
             'version': '1.3',
             'total_players': len(CONFIG['registered_players']),
@@ -316,6 +332,10 @@ def restore_from_backup(backup_data):
             CONFIG['registration_open'] = backup_data['registration_open']
         if 'game_active' in backup_data:
             CONFIG['game_active'] = backup_data['game_active']
+        if 'prizes_distributed' in backup_data:
+            CONFIG['prizes_distributed'] = backup_data['prizes_distributed']
+        else:
+            CONFIG['prizes_distributed'] = False
         
         # Сохраняем восстановленные данные
         save_data()
@@ -449,24 +469,45 @@ async def create_leaderboard_embed(page: int = 1):
         user = bot.get_user(user_id)
         player_number = CONFIG['player_numbers'].get(user_id, "???")
         
+        # Добавляем медальки для первых трех мест
+        medal = ""
+        if i == 0:  # 1 место
+            medal = "🥇"
+        elif i == 1:  # 2 место
+            medal = "🥈"
+        elif i == 2:  # 3 место
+            medal = "🥉"
+        
         if user:
             equipped_title = None
             if user_id in CONFIG['player_titles']:
                 equipped_title = CONFIG['player_titles'][user_id].get('equipped')
             
-            # ИЗМЕНЕНИЕ: титул после ника
+            # ИЗМЕНЕНИЕ: титул после ника и медалька перед
             if equipped_title:
-                leaderboard_text += f"`#{i+1:2d}` {user.display_name} **[{equipped_title}]** ({player_number})\n"
+                leaderboard_text += f"`#{i+1:2d}` {medal} {user.display_name} **[{equipped_title}]** ({player_number})\n"
             else:
-                leaderboard_text += f"`#{i+1:2d}` {user.display_name} ({player_number})\n"
+                leaderboard_text += f"`#{i+1:2d}` {medal} {user.display_name} ({player_number})\n"
         else:
-            leaderboard_text += f"`#{i+1:2d}` Unknown User ({player_number})\n"
+            leaderboard_text += f"`#{i+1:2d}` {medal} Unknown User ({player_number})\n"
     
     embed.add_field(
         name=f"🎮 Игроки ({start_index + 1}-{end_index})",
         value=leaderboard_text or "Нет данных",
         inline=False
     )
+    
+    # Добавляем информацию о призах для топ-3
+    if CONFIG['registration_order'] and len(CONFIG['registration_order']) >= 3:
+        embed.add_field(
+            name="🏆 Призы за первые три места",
+            value=(
+                f"🥇 1 место: **{PRIZES[1]:,}$**\n"
+                f"🥈 2 место: **{PRIZES[2]:,}$**\n" 
+                f"🥉 3 место: **{PRIZES[3]:,}$**"
+            ),
+            inline=False
+        )
     
     embed.set_footer(text=f"Страница {page}/{total_pages} • Лидерборд • Ink Game")
     embed.set_thumbnail(url="https://media.discordapp.net/attachments/1420114175895666759/1433470801197404160/download-Photoroom.png?ex=6904cf37&is=69037db7&hm=e1efd6926b779844a323f067c700d584a49945758839a19b4c6e8c0a34f2b44e&=&format=webp&quality=lossless")
@@ -515,8 +556,45 @@ async def auto_update_leaderboard():
     """Автоматически обновляет лидерборд с обработкой ошибок"""
     try:
         await update_leaderboard()
+        logger.info("✅ Лидерборд автоматически обновлен")
     except Exception as e:
         logger.error(f"❌ Ошибка автоматического обновления лидерборда: {e}")
+
+# ==================== СИСТЕМА ПРИЗОВ ====================
+
+async def distribute_prizes(guild_id: int):
+    """Распределяет призы за первые три места"""
+    if not CONFIG['registration_order'] or len(CONFIG['registration_order']) < 3:
+        return [], "Недостаточно игроков для распределения призов"
+    
+    if CONFIG['prizes_distributed']:
+        return [], "Призы уже были распределены ранее"
+    
+    prize_results = []
+    errors = []
+    
+    # Распределяем призы для топ-3
+    for place in range(1, 4):
+        if len(CONFIG['registration_order']) >= place:
+            user_id = CONFIG['registration_order'][place - 1]  # -1 потому что индексы с 0
+            prize_amount = PRIZES[place]
+            
+            success, message = await add_money_to_user(guild_id, user_id, prize_amount)
+            
+            user = bot.get_user(user_id)
+            username = user.display_name if user else f"ID {user_id}"
+            
+            if success:
+                prize_results.append(f"🥇 {place} место: {username} - {prize_amount:,}$")
+                logger.info(f"🏆 Приз выдан: {username} - {prize_amount}$")
+            else:
+                errors.append(f"{place} место ({username}): {message}")
+                logger.error(f"❌ Ошибка выдачи приза {place} место: {message}")
+    
+    CONFIG['prizes_distributed'] = True
+    save_data()
+    
+    return prize_results, errors
 
 # ==================== КОМАНДЫ ТИТУЛОВ ====================
 
@@ -1047,6 +1125,7 @@ async def start(interaction: discord.Interaction):
         
         CONFIG['registration_open'] = True
         CONFIG['game_active'] = True
+        CONFIG['prizes_distributed'] = False  # Сбрасываем флаг призов при новом старте
         
         save_data()
         
@@ -1372,12 +1451,18 @@ async def end(interaction: discord.Interaction):
             )
             await safe_edit_response(interaction, embed=processing_embed)
             
+            # Распределяем призы для топ-3 игроков (если еще не распределены)
+            prize_results = []
+            prize_errors = []
+            if not CONFIG['prizes_distributed'] and len(CONFIG['registration_order']) >= 3:
+                prize_results, prize_errors = await distribute_prizes(interaction.guild.id)
+            
             # Обрабатываем каждого игрока
             for user_id in list(CONFIG['registered_players']):
                 try:
                     member = await interaction.guild.fetch_member(user_id)
                     
-                    # Начисляем деньги через UnbelievaBoat
+                    # Начисляем базовые деньги через UnbelievaBoat (25000 каждому)
                     success, message = await add_money_to_user(interaction.guild.id, user_id, 25000)
                     if success:
                         money_sent_count += 1
@@ -1436,6 +1521,15 @@ async def end(interaction: discord.Interaction):
                 value="Каждый участник получил **25,000$**",
                 inline=False
             )
+            
+            # Добавляем информацию о призах если они были распределены
+            if prize_results:
+                result_embed.add_field(
+                    name="🏆 Призы за первые три места",
+                    value="\n".join(prize_results),
+                    inline=False
+                )
+            
             result_embed.add_field(
                 name="🔄 Выполненные действия",
                 value="• Регистрация закрыта\n• Игра завершена\n• Роли удалены\n• Ники восстановлены\n• Данные очищены\n• Деньги начислены\n• 🏆 Титулы сохранены",
@@ -1463,6 +1557,16 @@ async def end(interaction: discord.Interaction):
                     error_text += f"\n... и еще {len(money_errors) - 3} ошибок"
                 result_embed.add_field(
                     name="⚠️ Ошибки начисления денег",
+                    value=f"```{error_text}```",
+                    inline=False
+                )
+            
+            if prize_errors:
+                error_text = "\n".join(prize_errors[:3])
+                if len(prize_errors) > 3:
+                    error_text += f"\n... и еще {len(prize_errors) - 3} ошибок"
+                result_embed.add_field(
+                    name="⚠️ Ошибки распределения призов",
                     value=f"```{error_text}```",
                     inline=False
                 )
@@ -1521,8 +1625,8 @@ async def help_cmd(interaction: discord.Interaction):
                     "`/save` - Сохранить данные\n"
                     "`/load` - Загрузить данные\n"
                     "`/cc` - Выдать титул Контент Креэйтор\n"
-                    "`/backup` - Создать резервную копию\n"  # ← ДОБАВИТЬ ЭТУ СТРОКУ
-                    "`/restore` - Восстановить из копии"     # ← ДОБАВИТЬ ЭТУ СТРОКУ
+                    "`/backup` - Создать резервную копию\n"
+                    "`/restore` - Восстановить из копии"
                 ),
                 inline=False
             )
@@ -2105,7 +2209,7 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
         logger.error(f"❌ Ошибка в команде reset: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при сбросе регистрации", ephemeral=True)
 
-@bot.tree.command(name="list", description="Показать список зарегистрированных (только для админов)")
+@bot.tree.command(name="list", description="Показать список зарегистрированных (только для админы)")
 @app_commands.default_permissions(administrator=True)
 async def list_cmd(interaction: discord.Interaction):
     """Список зарегистрированных"""
@@ -2282,4 +2386,3 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
-
