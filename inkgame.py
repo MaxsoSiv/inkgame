@@ -423,6 +423,7 @@ async def get_user_balance(guild_id: int, user_id: int):
 async def update_leaderboard():
     """Обновляет сообщение лидерборда"""
     if not CONFIG['leaderboard_message_id'] or not CONFIG['leaderboard_channel_id']:
+        logger.info("ℹ️ Лидерборд не установлен, пропускаем обновление")
         return
     
     try:
@@ -437,6 +438,11 @@ async def update_leaderboard():
         await message.edit(embed=embed)
         logger.info("✅ Лидерборд обновлен")
         
+    except discord.NotFound:
+        logger.warning("❌ Сообщение лидерборда не найдено, сбрасываем настройки")
+        CONFIG['leaderboard_message_id'] = None
+        CONFIG['leaderboard_channel_id'] = None
+        save_data()
     except Exception as e:
         logger.error(f"❌ Ошибка обновления лидерборда: {e}")
 
@@ -541,13 +547,15 @@ async def safe_edit_response(interaction, *args, **kwargs):
         logger.error(f"❌ Ошибка при редактировании ответа: {e}")
         return False
 
-async def safe_defer_response(interaction, *args, **kwargs):
-    """Безопасное откладывание ответа"""
+async def safe_defer_response(interaction, ephemeral=False):
+    """Безопасное откладывание ответа - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
-        await interaction.response.defer(*args, **kwargs)
-        return True
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=ephemeral)
+            return True
+        return False
     except Exception as e:
-        logger.error(f"❌ Ошибка при откладывании ответа: {e}")
+        logger.warning(f"⚠️ Не удалось отложить ответ (возможно уже обработан): {e}")
         return False
 
 # ==================== АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ====================
@@ -602,7 +610,8 @@ async def distribute_prizes(guild_id: int):
 async def titles(interaction: discord.Interaction):
     """Показывает доступные титулы для покупки"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        # Упрощенный defer без thinking
+        await safe_defer_response(interaction, ephemeral=False)
         
         user_titles = CONFIG['player_titles'].get(interaction.user.id, {'owned': [], 'equipped': None})
         owned_titles = user_titles['owned']
@@ -657,7 +666,7 @@ async def titles(interaction: discord.Interaction):
 async def equip(interaction: discord.Interaction, название_титула: str):
     """Надевает титул из инвентаря"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         user_id = interaction.user.id
         
@@ -685,7 +694,7 @@ async def equip(interaction: discord.Interaction, название_титула:
         save_data()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
-        await auto_update_leaderboard()
+        asyncio.create_task(auto_update_leaderboard())
         
         # ИЗМЕНЕНИЕ: убрано упоминание цвета
         embed = discord.Embed(
@@ -710,7 +719,7 @@ async def equip(interaction: discord.Interaction, название_титула:
 async def inv(interaction: discord.Interaction):
     """Показывает инвентарь титулов"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         user_id = interaction.user.id
         
@@ -779,7 +788,7 @@ async def inv(interaction: discord.Interaction):
 async def unequip(interaction: discord.Interaction):
     """Снимает текущий титул"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         user_id = interaction.user.id
         
@@ -797,7 +806,7 @@ async def unequip(interaction: discord.Interaction):
         save_data()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
-        await auto_update_leaderboard()
+        asyncio.create_task(auto_update_leaderboard())
         
         embed = discord.Embed(
             title="❌ ТИТУЛ СНЯТ",
@@ -821,7 +830,7 @@ async def unequip(interaction: discord.Interaction):
 async def buy(interaction: discord.Interaction, название_титула: str):
     """Покупка титула"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        await safe_defer_response(interaction, ephemeral=False)
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -894,7 +903,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
         save_data()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
-        await auto_update_leaderboard()
+        asyncio.create_task(auto_update_leaderboard())
         
         # ИЗМЕНЕНИЕ: убрано упоминание цвета
         embed = discord.Embed(
@@ -943,7 +952,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
 async def leaderboard(interaction: discord.Interaction, страница: int = 1):
     """Показывает таблицу лидеров"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        await safe_defer_response(interaction, ephemeral=False)
         
         embed = await create_leaderboard_embed(страница)
         await safe_edit_response(interaction, embed=embed)
@@ -957,7 +966,7 @@ async def leaderboard(interaction: discord.Interaction, страница: int = 
 async def cc(interaction: discord.Interaction, игрок: discord.Member):
     """Выдает специальный титул Контент Креэйтор"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        await safe_defer_response(interaction, ephemeral=False)
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -977,7 +986,7 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
         save_data()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
-        await auto_update_leaderboard()
+        asyncio.create_task(auto_update_leaderboard())
         
         # ИЗМЕНЕНИЕ: убрано упоминание цвета
         embed = discord.Embed(
@@ -1007,7 +1016,7 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
 async def set_leaderboard(interaction: discord.Interaction):
     """Устанавливает сообщение лидерборда"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         embed = await create_leaderboard_embed()
         message = await interaction.channel.send(embed=embed)
@@ -1039,7 +1048,7 @@ async def set_leaderboard(interaction: discord.Interaction):
 async def update_leaderboard_cmd(interaction: discord.Interaction):
     """Обновляет лидерборд вручную"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         await update_leaderboard()
         
@@ -1059,7 +1068,7 @@ async def update_leaderboard_cmd(interaction: discord.Interaction):
 async def mytitle(interaction: discord.Interaction):
     """Показывает текущий титул игрока"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         user_id = interaction.user.id
         
@@ -1107,7 +1116,7 @@ async def mytitle(interaction: discord.Interaction):
 async def start(interaction: discord.Interaction):
     """Открытие регистрации"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        await safe_defer_response(interaction, ephemeral=False)
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -1161,7 +1170,7 @@ async def start(interaction: discord.Interaction):
 async def reg(interaction: discord.Interaction):
     """Команда для регистрации игрока"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -1223,7 +1232,7 @@ async def reg(interaction: discord.Interaction):
         save_data()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ РЕГИСТРАЦИИ
-        await auto_update_leaderboard()
+        asyncio.create_task(auto_update_leaderboard())
         
         registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
         
@@ -1303,7 +1312,7 @@ async def reg(interaction: discord.Interaction):
 async def status(interaction: discord.Interaction):
     """Команда для проверки статуса регистрации"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         available_spots = CONFIG['max_players'] - len(CONFIG['registered_players'])
         
@@ -1375,7 +1384,7 @@ async def status(interaction: discord.Interaction):
 async def end(interaction: discord.Interaction):
     """Закрытие регистрации или завершение игры"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -1642,7 +1651,7 @@ async def help_cmd(interaction: discord.Interaction):
 async def ping(interaction: discord.Interaction):
     """Показывает задержку бота"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         latency = round(bot.latency * 1000)
         
@@ -1672,7 +1681,7 @@ async def ping(interaction: discord.Interaction):
 async def freenumbers(interaction: discord.Interaction):
     """Показывает свободные номера"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         all_numbers = set(range(CONFIG['min_number'], CONFIG['max_number'] + 1))
         free_numbers = all_numbers - CONFIG['used_numbers']
@@ -1714,7 +1723,7 @@ async def freenumbers(interaction: discord.Interaction):
 async def changenumber(interaction: discord.Interaction, игрок: discord.Member, новый_номер: int):
     """Изменяет номер игрока"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if игрок.id not in CONFIG['registered_players']:
             await safe_edit_response(interaction, content="❌ Игрок не зарегистрирован")
@@ -1932,7 +1941,7 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                     
                     if success:
                         # Обновляем лидерборд
-                        await auto_update_leaderboard()
+                        asyncio.create_task(auto_update_leaderboard())
                         
                         # Сообщение об успехе
                         success_embed = discord.Embed(
@@ -1998,7 +2007,7 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
 async def broadcast(interaction: discord.Interaction, сообщение: str):
     """Отправляет сообщение всем зарегистрированным игрокам"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if not CONFIG['registered_players']:
             await safe_edit_response(interaction, content="❌ Нет игроков для рассылки")
@@ -2051,7 +2060,7 @@ async def broadcast(interaction: discord.Interaction, сообщение: str):
 async def players(interaction: discord.Interaction):
     """Показывает количество участников"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        await safe_defer_response(interaction, ephemeral=False)
         
         total_players = len(CONFIG['registered_players'])
         available_spots = CONFIG['max_players'] - total_players
@@ -2099,7 +2108,7 @@ async def players(interaction: discord.Interaction):
 async def mynumber(interaction: discord.Interaction):
     """Показывает номер игрока"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if interaction.user.id not in CONFIG['registered_players']:
             embed = discord.Embed(
@@ -2132,7 +2141,7 @@ async def mynumber(interaction: discord.Interaction):
 async def reset(interaction: discord.Interaction, игрок: discord.Member):
     """Сброс регистрации конкретного игрока"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -2166,7 +2175,7 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
         save_data()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ УДАЛЕНИИ ИГРОКА
-        await auto_update_leaderboard()
+        asyncio.create_task(auto_update_leaderboard())
         
         # Убираем роль
         registration_role = discord.utils.get(interaction.guild.roles, name=CONFIG['registration_role_name'])
@@ -2214,7 +2223,7 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
 async def list_cmd(interaction: discord.Interaction):
     """Список зарегистрированных"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if not CONFIG['registered_players']:
             embed = discord.Embed(
@@ -2274,7 +2283,7 @@ async def list_cmd(interaction: discord.Interaction):
 async def save_cmd(interaction: discord.Interaction):
     """Принудительное сохранение данных"""
     try:
-        await safe_defer_response(interaction, ephemeral=False, thinking=True)
+        await safe_defer_response(interaction, ephemeral=False)
         
         if save_data():
             embed = discord.Embed(
@@ -2310,7 +2319,7 @@ async def save_cmd(interaction: discord.Interaction):
 async def load_cmd(interaction: discord.Interaction):
     """Принудительная загрузка данных"""
     try:
-        await safe_defer_response(interaction, ephemeral=True, thinking=True)
+        await safe_defer_response(interaction, ephemeral=True)
         
         if load_data():
             embed = discord.Embed(
