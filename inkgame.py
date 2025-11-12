@@ -44,7 +44,7 @@ CONFIG = {
     'leaderboard_message_id': None,
     'leaderboard_channel_id': None,
     'prizes_distributed': False,  # Флаг для отслеживания выданных призов
-    'backup_channel_id': None  # ID канала для бэкапов
+    'backup_channel_id': 1438148552756039712  # ID канала для бэкапов
 }
 
 # Доступные титулы (цвета убраны)
@@ -58,10 +58,10 @@ AVAILABLE_TITLES = {
 
 # Цены титулов
 TITLE_PRICES = {
-    "EchoFan": 5000,
-    "Legend": 10000,
-    "Rich": 15000,
-    "mastermind": 20000,
+    "EchoFan": 12500,
+    "Legend": 25000,
+    "Rich": 35000,
+    "mastermind": 50000,
     "Контент Креэйтор": 0
 }
 
@@ -2411,3 +2411,4 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
