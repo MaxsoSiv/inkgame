@@ -43,7 +43,8 @@ CONFIG = {
     'registration_order': [],
     'leaderboard_message_id': None,
     'leaderboard_channel_id': None,
-    'prizes_distributed': False  # Флаг для отслеживания выданных призов
+    'prizes_distributed': False,  # Флаг для отслеживания выданных призов
+    'backup_channel_id': None  # ID канала для бэкапов
 }
 
 # Доступные титулы (цвета убраны)
@@ -74,6 +75,7 @@ PRIZES = {
 # Токены из переменных окружения
 DISCORD_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 UNBELIEVABOAT_TOKEN = os.getenv('UNBELIEVABOAT_TOKEN')
+BACKUP_CHANNEL_ID = os.getenv('BACKUP_CHANNEL_ID')  # ID канала для бэкапов
 
 # Проверка токенов при запуске
 if not DISCORD_TOKEN:
@@ -84,9 +86,78 @@ if not UNBELIEVABOAT_TOKEN:
     logger.error("❌ Ошибка: UNBELIEVABOAT_TOKEN не найден в .env файле")
     exit(1)
 
-def save_data_with_backup():
-    """Сохраняет данные и создает резервную копию"""
-    if save_data():
+# ==================== СИСТЕМА АВТОМАТИЧЕСКИХ БЭКАПОВ ====================
+
+async def send_backup_to_channel():
+    """Отправляет бэкап в указанный канал"""
+    try:
+        if not BACKUP_CHANNEL_ID:
+            logger.warning("⚠️ BACKUP_CHANNEL_ID не установлен, пропускаем отправку бэкапа")
+            return False
+        
+        channel = bot.get_channel(int(BACKUP_CHANNEL_ID))
+        if not channel:
+            logger.error("❌ Канал для бэкапов не найден")
+            return False
+        
+        # Создаем временный файл для отправки
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"game_backup_{timestamp}.json"
+        
+        # Копируем текущий game_data.json во временный файл
+        if os.path.exists('game_data.json'):
+            import shutil
+            shutil.copy2('game_data.json', backup_filename)
+            
+            # Создаем embed с информацией о бэкапе
+            embed = discord.Embed(
+                title="💾 АВТОМАТИЧЕСКИЙ БЭКАП",
+                description="Создан автоматический бэкап данных игры",
+                color=0x00ff00,
+                timestamp=datetime.datetime.now()
+            )
+            
+            embed.add_field(
+                name="📊 Статистика",
+                value=(
+                    f"• Игроков: {len(CONFIG['registered_players'])}\n"
+                    f"• Номеров: {len(CONFIG['used_numbers'])}\n"
+                    f"• Титулов: {len(CONFIG['player_titles'])}\n"
+                    f"• Регистрация: {'Открыта' if CONFIG['registration_open'] else 'Закрыта'}\n"
+                    f"• Игра: {'Активна' if CONFIG['game_active'] else 'Неактивна'}"
+                ),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="🕐 Время создания",
+                value=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                inline=True
+            )
+            
+            embed.set_footer(text="Автоматическая система бэкапов • Ink Game")
+            
+            # Отправляем файл
+            file = discord.File(backup_filename, filename=backup_filename)
+            await channel.send(embed=embed, file=file)
+            
+            # Удаляем временный файл
+            os.remove(backup_filename)
+            
+            logger.info("✅ Бэкап отправлен в канал")
+            return True
+        else:
+            logger.warning("⚠️ Файл game_data.json не найден для бэкапа")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки бэкапа: {e}")
+        return False
+
+async def save_data_with_backup():
+    """Сохраняет данные и создает резервную копию с отправкой в канал"""
+    if await save_data():
+        # Создаем локальную резервную копию
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_filename = f"backups/game_data_backup_{timestamp}.json"
         
@@ -96,16 +167,20 @@ def save_data_with_backup():
         import shutil
         shutil.copy2('game_data.json', backup_filename)
         
+        # Удаляем старые бэкапы (оставляем только 5 последних)
         backup_files = sorted([f for f in os.listdir('backups') if f.startswith('game_data_backup_')])
         if len(backup_files) > 5:
             for old_backup in backup_files[:-5]:
                 os.remove(f"backups/{old_backup}")
         
+        # Отправляем бэкап в канал
+        await send_backup_to_channel()
+        
         return True
     return False
 
-def save_data():
-    """Сохраняет данные в файл"""
+async def save_data():
+    """Сохраняет данные в файл (асинхронная версия)"""
     try:
         save_data = {
             'used_numbers': list(CONFIG['used_numbers']),
@@ -119,7 +194,7 @@ def save_data():
             'leaderboard_channel_id': CONFIG['leaderboard_channel_id'],
             'prizes_distributed': CONFIG['prizes_distributed'],
             'saved_at': str(datetime.datetime.now()),
-            'version': '1.2'
+            'version': '1.3'
         }
         
         temp_filename = 'game_data_temp.json'
@@ -142,6 +217,58 @@ def save_data():
         except:
             pass
         return False
+
+# ==================== СИСТЕМА ВОССТАНОВЛЕНИЯ ИЗ РОЛЕЙ ====================
+
+async def restore_players_from_roles(guild):
+    """Восстанавливает игроков из роли 'Зарегистрирован' при запуске бота"""
+    try:
+        logger.info("🔄 Проверка игроков с ролью 'Зарегистрирован'...")
+        
+        role = discord.utils.get(guild.roles, name=CONFIG['registration_role_name'])
+        if not role:
+            logger.info("⚠️ Роль 'Зарегистрирован' не найдена")
+            return
+        
+        restored_count = 0
+        for member in role.members:
+            if member.id not in CONFIG['registered_players']:
+                # Игрок есть в роли, но нет в данных - восстанавливаем
+                logger.info(f"🔄 Восстановление игрока {member.display_name} ({member.id})")
+                
+                # Извлекаем номер из ника
+                number_match = re.search(r'\((\d{3})\)$', member.display_name)
+                if number_match:
+                    player_number = int(number_match.group(1))
+                    formatted_number = f"{player_number:03d}"
+                    
+                    # Проверяем, не занят ли номер
+                    if player_number in CONFIG['used_numbers']:
+                        # Генерируем новый номер
+                        while True:
+                            player_number = random.randint(CONFIG['min_number'], CONFIG['max_number'])
+                            if player_number not in CONFIG['used_numbers']:
+                                break
+                        formatted_number = f"{player_number:03d}"
+                    
+                    CONFIG['used_numbers'].add(player_number)
+                    CONFIG['registered_players'].add(member.id)
+                    CONFIG['player_numbers'][member.id] = formatted_number
+                    
+                    if member.id not in CONFIG['registration_order']:
+                        CONFIG['registration_order'].append(member.id)
+                    
+                    restored_count += 1
+                    logger.info(f"✅ Восстановлен игрок {member.display_name} с номером {formatted_number}")
+        
+        if restored_count > 0:
+            logger.info(f"✅ Восстановлено {restored_count} игроков из ролей")
+            await save_data()  # Сохраняем восстановленные данные
+        else:
+            logger.info("ℹ️ Новых игроков для восстановления не найдено")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка восстановления игроков из ролей: {e}")
 
 def load_data():
     """Загружает данные из файла"""
@@ -231,142 +358,6 @@ def load_data():
         CONFIG['prizes_distributed'] = False
         return False
 
-# ==================== СИСТЕМА БЭКАПА И ВОССТАНОВЛЕНИЯ ====================
-
-def create_backup_file():
-    """Создает файл резервной копии и возвращает его имя"""
-    try:
-        # Создаем данные для бэкапа
-        backup_data = {
-            'used_numbers': list(CONFIG['used_numbers']),
-            'registered_players': list(CONFIG['registered_players']),
-            'player_numbers': CONFIG['player_numbers'],
-            'registration_open': CONFIG['registration_open'],
-            'game_active': CONFIG['game_active'],
-            'player_titles': CONFIG['player_titles'],
-            'registration_order': CONFIG['registration_order'],
-            'leaderboard_message_id': CONFIG['leaderboard_message_id'],
-            'leaderboard_channel_id': CONFIG['leaderboard_channel_id'],
-            'prizes_distributed': CONFIG['prizes_distributed'],
-            'backup_created_at': str(datetime.datetime.now()),
-            'version': '1.3',
-            'total_players': len(CONFIG['registered_players']),
-            'total_titles': len(CONFIG['player_titles'])
-        }
-        
-        # Создаем временный файл
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"game_backup_{timestamp}.json"
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(backup_data, f, indent=2, ensure_ascii=False, default=str)
-        
-        return filename
-    except Exception as e:
-        logger.error(f"❌ Ошибка создания файла бэкапа: {e}")
-        return None
-
-def restore_from_backup(backup_data):
-    """Восстанавливает данные из бэкапа"""
-    try:
-        # Сохраняем текущие данные как резервную копию перед восстановлением
-        save_data_with_backup()
-        
-        # Очищаем текущие данные
-        CONFIG['used_numbers'].clear()
-        CONFIG['registered_players'].clear()
-        CONFIG['player_numbers'].clear()
-        CONFIG['player_titles'].clear()
-        CONFIG['registration_order'].clear()
-        
-        # Восстанавливаем used_numbers
-        if 'used_numbers' in backup_data:
-            CONFIG['used_numbers'] = set(backup_data['used_numbers'])
-        
-        # Восстанавливаем registered_players
-        if 'registered_players' in backup_data:
-            CONFIG['registered_players'] = set(backup_data['registered_players'])
-        
-        # Восстанавливаем player_numbers
-        if 'player_numbers' in backup_data:
-            CONFIG['player_numbers'] = {}
-            for user_id_str, number_str in backup_data['player_numbers'].items():
-                try:
-                    user_id = int(user_id_str)
-                    CONFIG['player_numbers'][user_id] = number_str
-                except (ValueError, TypeError):
-                    logger.warning(f"⚠️ Неверный user_id в бэкапе: {user_id_str}")
-                    continue
-        
-        # Восстанавливаем player_titles
-        if 'player_titles' in backup_data:
-            CONFIG['player_titles'] = {}
-            for user_id_str, title_data in backup_data['player_titles'].items():
-                try:
-                    user_id = int(user_id_str)
-                    if isinstance(title_data, str):
-                        CONFIG['player_titles'][user_id] = {
-                            'owned': [title_data],
-                            'equipped': title_data
-                        }
-                    else:
-                        CONFIG['player_titles'][user_id] = title_data
-                except (ValueError, TypeError):
-                    logger.warning(f"⚠️ Неверный user_id в бэкапе титулов: {user_id_str}")
-                    continue
-        
-        # Восстанавливаем registration_order
-        if 'registration_order' in backup_data:
-            CONFIG['registration_order'] = backup_data['registration_order']
-        else:
-            CONFIG['registration_order'] = list(CONFIG['registered_players'])
-        
-        # Восстанавливаем лидерборд
-        if 'leaderboard_message_id' in backup_data:
-            CONFIG['leaderboard_message_id'] = backup_data['leaderboard_message_id']
-        if 'leaderboard_channel_id' in backup_data:
-            CONFIG['leaderboard_channel_id'] = backup_data['leaderboard_channel_id']
-        
-        # Восстанавливаем флаги
-        if 'registration_open' in backup_data:
-            CONFIG['registration_open'] = backup_data['registration_open']
-        if 'game_active' in backup_data:
-            CONFIG['game_active'] = backup_data['game_active']
-        if 'prizes_distributed' in backup_data:
-            CONFIG['prizes_distributed'] = backup_data['prizes_distributed']
-        else:
-            CONFIG['prizes_distributed'] = False
-        
-        # Сохраняем восстановленные данные
-        save_data()
-        
-        logger.info("✅ Данные восстановлены из бэкапа")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка восстановления из бэкапа: {e}")
-        return False
-
-@bot.event
-async def on_ready():
-    logger.info(f'✅ Бот {bot.user} запущен!')
-    logger.info(f'🆔 ID бота: {bot.user.id}')
-    
-    load_data()
-    
-    logger.info(f'📊 Статус регистрации: {"Открыта" if CONFIG["registration_open"] else "Закрыта"}')
-    logger.info(f'🎫 Свободных мест: {CONFIG["max_players"] - len(CONFIG["registered_players"])}')
-    
-    await asyncio.sleep(2)
-    
-    try:
-        synced = await bot.tree.sync()
-        logger.info(f"✅ Загружено {len(synced)} команд")
-        for command in synced:
-            logger.info(f" - {command.name}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка синхронизации команд: {e}")
-
 def remove_number_from_nick(nickname: Optional[str]) -> str:
     """Удаляет номер из ника в формате (123)"""
     if nickname:
@@ -442,7 +433,7 @@ async def update_leaderboard():
         logger.warning("❌ Сообщение лидерборда не найдено, сбрасываем настройки")
         CONFIG['leaderboard_message_id'] = None
         CONFIG['leaderboard_channel_id'] = None
-        save_data()
+        await save_data_with_backup()
     except Exception as e:
         logger.error(f"❌ Ошибка обновления лидерборда: {e}")
 
@@ -600,7 +591,7 @@ async def distribute_prizes(guild_id: int):
                 logger.error(f"❌ Ошибка выдачи приза {place} место: {message}")
     
     CONFIG['prizes_distributed'] = True
-    save_data()
+    await save_data_with_backup()
     
     return prize_results, errors
 
@@ -691,7 +682,7 @@ async def equip(interaction: discord.Interaction, название_титула:
             return
         
         user_titles['equipped'] = название_титула
-        save_data()
+        await save_data_with_backup()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
         asyncio.create_task(auto_update_leaderboard())
@@ -803,7 +794,7 @@ async def unequip(interaction: discord.Interaction):
         
         old_title = CONFIG['player_titles'][user_id]['equipped']
         CONFIG['player_titles'][user_id]['equipped'] = None
-        save_data()
+        await save_data_with_backup()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
         asyncio.create_task(auto_update_leaderboard())
@@ -900,7 +891,7 @@ async def buy(interaction: discord.Interaction, название_титула: s
         if user_titles['equipped'] is None:
             user_titles['equipped'] = название_титула
         
-        save_data()
+        await save_data_with_backup()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
         asyncio.create_task(auto_update_leaderboard())
@@ -983,7 +974,7 @@ async def cc(interaction: discord.Interaction, игрок: discord.Member):
             user_titles['owned'].append("Контент Креэйтор")
         
         user_titles['equipped'] = "Контент Креэйтор"
-        save_data()
+        await save_data_with_backup()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА
         asyncio.create_task(auto_update_leaderboard())
@@ -1023,7 +1014,7 @@ async def set_leaderboard(interaction: discord.Interaction):
         
         CONFIG['leaderboard_message_id'] = message.id
         CONFIG['leaderboard_channel_id'] = interaction.channel.id
-        save_data()
+        await save_data_with_backup()
         
         embed = discord.Embed(
             title="✅ ЛИДЕРБОРД УСТАНОВЛЕН",
@@ -1136,7 +1127,7 @@ async def start(interaction: discord.Interaction):
         CONFIG['game_active'] = True
         CONFIG['prizes_distributed'] = False  # Сбрасываем флаг призов при новом старте
         
-        save_data()
+        await save_data_with_backup()
         
         embed = discord.Embed(
             title="🎮 РЕГИСТРАЦИЯ ОТКРЫТА",
@@ -1229,7 +1220,7 @@ async def reg(interaction: discord.Interaction):
         if interaction.user.id not in CONFIG['registration_order']:
             CONFIG['registration_order'].append(interaction.user.id)
         
-        save_data()
+        await save_data_with_backup()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ РЕГИСТРАЦИИ
         asyncio.create_task(auto_update_leaderboard())
@@ -1405,7 +1396,7 @@ async def end(interaction: discord.Interaction):
             CONFIG['registration_open'] = False
             
             # Сохраняем изменения
-            save_data()
+            await save_data_with_backup()
             
             embed = discord.Embed(
                 title="🔒 РЕГИСТРАЦИЯ ЗАКРЫТА",
@@ -1512,7 +1503,7 @@ async def end(interaction: discord.Interaction):
             # ТИТУЛЫ НЕ УДАЛЯЕМ - они сохраняются навсегда
             
             # Сохраняем изменения
-            save_data()
+            await save_data_with_backup()
             
             # Финальное сообщение
             result_embed = discord.Embed(
@@ -1746,7 +1737,7 @@ async def changenumber(interaction: discord.Interaction, игрок: discord.Mem
         CONFIG['used_numbers'].add(новый_номер)
         CONFIG['player_numbers'][игрок.id] = formatted_number
         
-        save_data()
+        await save_data_with_backup()
         
         # Обновляем ник
         try:
@@ -1780,55 +1771,54 @@ async def backup(interaction: discord.Interaction):
         await safe_send_response(interaction, "🔄 Создаю резервную копию...", ephemeral=True)
         
         # Создаем файл бэкапа
-        filename = create_backup_file()
-        if not filename:
-            await interaction.edit_original_response(content="❌ Не удалось создать резервную копию")
-            return
+        success = await send_backup_to_channel()
         
-        # Создаем embed с информацией о бэкапе
+        if success:
+            embed = discord.Embed(
+                title="💾 РУЧНОЙ БЭКАП СОЗДАН",
+                description="Бэкап данных успешно отправлен в канал",
+                color=0x00ff00
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ ОШИБКА БЭКАПА",
+                description="Не удалось создать бэкап. Проверьте настройки канала.",
+                color=0xff0000
+            )
+        
+        await interaction.edit_original_response(embed=embed)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в команде backup: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при создании бэкапа", ephemeral=True)
+
+@bot.tree.command(name="set_backup_channel", description="Установить канал для автоматических бэкапов (админы)")
+@app_commands.default_permissions(administrator=True)
+async def set_backup_channel(interaction: discord.Interaction):
+    """Устанавливает канал для автоматических бэкапов"""
+    try:
+        await safe_defer_response(interaction, ephemeral=True)
+        
+        CONFIG['backup_channel_id'] = interaction.channel.id
+        await save_data_with_backup()
+        
         embed = discord.Embed(
-            title="💾 РЕЗЕРВНАЯ КОПИЯ СОЗДАНА",
-            description="Файл с резервной копией данных готов к скачиванию",
+            title="✅ КАНАЛ ДЛЯ БЭКАПОВ УСТАНОВЛЕН",
+            description="Этот канал будет использоваться для автоматических бэкапов данных",
             color=0x00ff00
         )
         
         embed.add_field(
-            name="📊 Статистика бэкапа",
-            value=(
-                f"• Игроков: {len(CONFIG['registered_players'])}\n"
-                f"• Номеров: {len(CONFIG['used_numbers'])}\n"
-                f"• Титулов: {len(CONFIG['player_titles'])}\n"
-                f"• Регистрация: {'Открыта' if CONFIG['registration_open'] else 'Закрыта'}\n"
-                f"• Игра: {'Активна' if CONFIG['game_active'] else 'Неактивна'}"
-            ),
+            name="💾 Автоматические бэкапы",
+            value="Бэкапы будут отправляться при:\n• Регистрации игроков\n• Покупке титулов\n• Изменении титулов\n• Завершении игры\n• Любых других изменениях данных",
             inline=False
         )
         
-        embed.add_field(
-            name="💡 Важная информация",
-            value=(
-                "Сохраните этот файл в надежном месте.\n"
-                "Для восстановления данных используйте команду `/restore`"
-            ),
-            inline=False
-        )
-        
-        embed.set_footer(text=f"Бэкап создан • {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Отправляем файл
-        file = discord.File(filename, filename=filename)
-        await interaction.edit_original_response(embed=embed, attachments=[file])
-        
-        # Удаляем временный файл после отправки
-        await asyncio.sleep(1)
-        if os.path.exists(filename):
-            os.remove(filename)
-            
-        logger.info(f"✅ Резервная копия создана пользователем {interaction.user.display_name}")
+        await safe_edit_response(interaction, embed=embed)
         
     except Exception as e:
-        logger.error(f"❌ Ошибка в команде backup: {e}")
-        await safe_send_response(interaction, "❌ Произошла ошибка при создании резервной копии", ephemeral=True)
+        logger.error(f"❌ Ошибка в команде set_backup_channel: {e}")
+        await safe_send_response(interaction, "❌ Произошла ошибка при установке канала для бэкапов", ephemeral=True)
 
 @bot.tree.command(name="restore", description="Восстановить данные из резервной копии (админы)")
 @app_commands.default_permissions(administrator=True)
@@ -2172,7 +2162,7 @@ async def reset(interaction: discord.Interaction, игрок: discord.Member):
             CONFIG['registration_order'].remove(игрок.id)
         
         # Сохраняем изменения
-        save_data()
+        await save_data_with_backup()
         
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ УДАЛЕНИИ ИГРОКА
         asyncio.create_task(auto_update_leaderboard())
@@ -2285,7 +2275,7 @@ async def save_cmd(interaction: discord.Interaction):
     try:
         await safe_defer_response(interaction, ephemeral=False)
         
-        if save_data():
+        if await save_data_with_backup():
             embed = discord.Embed(
                 title="💾 ДАННЫЕ СОХРАНЕНЫ",
                 description="Все данные игры успешно сохранены",
@@ -2365,6 +2355,32 @@ async def sync(ctx):
             color=0xff0000
         )
         await ctx.send(embed=embed, ephemeral=True)
+
+@bot.event
+async def on_ready():
+    logger.info(f'✅ Бот {bot.user} запущен!')
+    logger.info(f'🆔 ID бота: {bot.user.id}')
+    
+    # Загружаем данные из файла
+    load_data()
+    
+    # Восстанавливаем игроков из ролей на всех серверах
+    for guild in bot.guilds:
+        logger.info(f"🔍 Проверка сервера: {guild.name}")
+        await restore_players_from_roles(guild)
+    
+    logger.info(f'📊 Статус регистрации: {"Открыта" if CONFIG["registration_open"] else "Закрыта"}')
+    logger.info(f'🎫 Свободных мест: {CONFIG["max_players"] - len(CONFIG["registered_players"])}')
+    
+    await asyncio.sleep(2)
+    
+    try:
+        synced = await bot.tree.sync()
+        logger.info(f"✅ Загружено {len(synced)} команд")
+        for command in synced:
+            logger.info(f" - {command.name}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка синхронизации команд: {e}")
 
 # ==================== RENDER FIX ====================
 # Простой веб-сервер для Render (чтобы избежать ошибки портов)
