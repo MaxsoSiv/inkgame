@@ -86,8 +86,6 @@ if not UNBELIEVABOAT_TOKEN:
     logger.error("❌ Ошибка: UNBELIEVABOAT_TOKEN не найден в .env файле")
     exit(1)
 
-# ==================== СИСТЕМА АВТОМАТИЧЕСКИХ БЭКАПОВ ====================
-
 async def send_backup_to_channel():
     """Отправляет бэкап в указанный канал"""
     try:
@@ -216,6 +214,89 @@ async def save_data():
                 os.remove('game_data_temp.json')
         except:
             pass
+        return False
+
+# ==================== СИСТЕМА ВОССТАНОВЛЕНИЯ ИЗ БЭКАПА ====================
+
+async def restore_from_backup(backup_data):
+    """Восстанавливает данные из бэкапа (асинхронная версия)"""
+    try:
+        # Сохраняем текущие данные как резервную копию перед восстановлением
+        await save_data_with_backup()
+        
+        # Очищаем текущие данные
+        CONFIG['used_numbers'].clear()
+        CONFIG['registered_players'].clear()
+        CONFIG['player_numbers'].clear()
+        CONFIG['player_titles'].clear()
+        CONFIG['registration_order'].clear()
+        
+        # Восстанавливаем used_numbers
+        if 'used_numbers' in backup_data:
+            CONFIG['used_numbers'] = set(backup_data['used_numbers'])
+        
+        # Восстанавливаем registered_players
+        if 'registered_players' in backup_data:
+            CONFIG['registered_players'] = set(backup_data['registered_players'])
+        
+        # Восстанавливаем player_numbers
+        if 'player_numbers' in backup_data:
+            CONFIG['player_numbers'] = {}
+            for user_id_str, number_str in backup_data['player_numbers'].items():
+                try:
+                    user_id = int(user_id_str)
+                    CONFIG['player_numbers'][user_id] = number_str
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Неверный user_id в бэкапе: {user_id_str}")
+                    continue
+        
+        # Восстанавливаем player_titles
+        if 'player_titles' in backup_data:
+            CONFIG['player_titles'] = {}
+            for user_id_str, title_data in backup_data['player_titles'].items():
+                try:
+                    user_id = int(user_id_str)
+                    if isinstance(title_data, str):
+                        CONFIG['player_titles'][user_id] = {
+                            'owned': [title_data],
+                            'equipped': title_data
+                        }
+                    else:
+                        CONFIG['player_titles'][user_id] = title_data
+                except (ValueError, TypeError):
+                    logger.warning(f"⚠️ Неверный user_id в бэкапе титулов: {user_id_str}")
+                    continue
+        
+        # Восстанавливаем registration_order
+        if 'registration_order' in backup_data:
+            CONFIG['registration_order'] = backup_data['registration_order']
+        else:
+            CONFIG['registration_order'] = list(CONFIG['registered_players'])
+        
+        # Восстанавливаем лидерборд
+        if 'leaderboard_message_id' in backup_data:
+            CONFIG['leaderboard_message_id'] = backup_data['leaderboard_message_id']
+        if 'leaderboard_channel_id' in backup_data:
+            CONFIG['leaderboard_channel_id'] = backup_data['leaderboard_channel_id']
+        
+        # Восстанавливаем флаги
+        if 'registration_open' in backup_data:
+            CONFIG['registration_open'] = backup_data['registration_open']
+        if 'game_active' in backup_data:
+            CONFIG['game_active'] = backup_data['game_active']
+        if 'prizes_distributed' in backup_data:
+            CONFIG['prizes_distributed'] = backup_data['prizes_distributed']
+        else:
+            CONFIG['prizes_distributed'] = False
+        
+        # Сохраняем восстановленные данные
+        await save_data()
+        
+        logger.info("✅ Данные восстановлены из бэкапа")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка восстановления из бэкапа: {e}")
         return False
 
 # ==================== СИСТЕМА ВОССТАНОВЛЕНИЯ ИЗ РОЛЕЙ ====================
@@ -1926,8 +2007,8 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                     )
                     await interaction.response.edit_message(embed=restoring_embed, view=None)
                     
-                    # Восстанавливаем данные
-                    success = restore_from_backup(self.backup_data)
+                    # Восстанавливаем данные с использованием асинхронной функции
+                    success = await restore_from_backup(self.backup_data)
                     
                     if success:
                         # Обновляем лидерборд
@@ -1991,7 +2072,6 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
     except Exception as e:
         logger.error(f"❌ Ошибка в команде restore: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при обработке файла", ephemeral=True)
-
 @bot.tree.command(name="broadcast", description="Сделать объявление для всех игроков (админы)")
 @app_commands.default_permissions(administrator=True)
 async def broadcast(interaction: discord.Interaction, сообщение: str):
@@ -2411,4 +2491,5 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
