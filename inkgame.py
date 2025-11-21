@@ -30,7 +30,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Конфигурация
 CONFIG = {
-    'max_players': 60,
+    'max_players': 90,
     'min_number': 1,
     'max_number': 456,
     'registration_role_name': 'Зарегистрирован',
@@ -2491,5 +2491,6 @@ keep_alive()
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
