@@ -1,6 +1,6 @@
 {
   "guilds": {
-    "123456789": {
+    "950794781716545587": {
       "max_players": 90,
       "min_number": 1,
       "max_number": 456,
@@ -17,13 +17,13 @@
       "prizes_distributed": false,
       "backup_channel_id": null,
       "reward_amount": 25000,
-      "guild_name": "Название сервера 1"
+      "guild_name": "ECHO SQUAD"
     },
-    "987654321": {
-      "max_players": 20,
+    "1435329398583853058": {
+      "max_players": 50,
       "min_number": 1,
       "max_number": 456,
-      "registration_role_name": "Зарегистрирован",
+      "registration_role_name": "Registered",
       "used_numbers": [],
       "registered_players": [],
       "player_numbers": {},
@@ -36,8 +36,9 @@
       "prizes_distributed": false,
       "backup_channel_id": null,
       "reward_amount": 15000,
-      "guild_name": "Название сервера 2"
+      "guild_name": "qwerty wake up 2.0"
     }
   },
   "version": "2.0"
 }
+
