@@ -87,7 +87,7 @@ def get_guild_config(guild_id: int, guild_name: str = "Unknown Server") -> dict:
         # Создаем новую конфигурацию для сервера
         new_config = DEFAULT_CONFIG.copy()
         new_config['guild_name'] = guild_name
-        # НЕ преобразуем set в list здесь - это делается только при сохранении в JSON
+        # ВАЖНО: Не преобразуем множества в списки здесь - это делается только при сохранении
         GUILD_DATA[guild_id] = new_config
         logger.info(f"🆕 Создана новая конфигурация для сервера {guild_name} ({guild_id})")
     return GUILD_DATA[guild_id]
@@ -195,8 +195,9 @@ async def send_backup_to_channel(guild_id: int):
 
 async def save_data_with_backup(guild_id: int):
     """Сохраняет данные и создает резервную копию с отправкой в канал"""
+    # Сохраняем данные всех серверов
     if await save_data():
-        # Отправляем бэкап в канал
+        # Отправляем бэкап только для конкретного сервера
         await send_backup_to_channel(guild_id)
         return True
     return False
@@ -386,31 +387,18 @@ def load_data():
         
         GUILD_DATA.clear()
         
-        # Проверяем версию формата
         if 'guilds' in data:
-            # Новый формат с несколькими серверами
             for guild_id_str, config in data['guilds'].items():
                 try:
                     guild_id = int(guild_id_str)
-                    GUILD_DATA[guild_id] = convert_lists_to_sets(config)
+                    # Конвертируем списки в множества
+                    converted_config = convert_lists_to_sets(config)
+                    GUILD_DATA[guild_id] = converted_config
                 except (ValueError, TypeError):
                     logger.warning(f"⚠️ Неверный guild_id в данных: {guild_id_str}")
                     continue
-        else:
-            # Старый формат - конвертируем в новый
-            logger.info("🔄 Конвертируем старый формат данных в новый...")
-            old_config = convert_lists_to_sets(data)
-            # Предполагаем, что старые данные относятся к первому серверу бота
-            if bot.guilds:
-                first_guild = bot.guilds[0]
-                old_config['guild_name'] = first_guild.name
-                GUILD_DATA[first_guild.id] = old_config
-                logger.info(f"✅ Старые данные перенесены на сервер {first_guild.name}")
         
         logger.info("✅ Данные загружены")
-        logger.info(f"📊 Загружено серверов: {len(GUILD_DATA)}")
-        for guild_id, config in GUILD_DATA.items():
-            logger.info(f"  • {config.get('guild_name', 'Unknown')}: {len(config['registered_players'])} игроков")
         return True
         
     except Exception as e:
@@ -606,6 +594,9 @@ async def safe_defer_response(interaction, ephemeral=False):
         if not interaction.response.is_done():
             await interaction.response.defer(ephemeral=ephemeral)
             return True
+        return False
+    except discord.errors.NotFound:
+        logger.warning(f"⚠️ Взаимодействие не найдено (истекло время), пропускаем отложенный ответ")
         return False
     except Exception as e:
         logger.warning(f"⚠️ Не удалось отложить ответ (возможно уже обработан): {e}")
@@ -887,7 +878,12 @@ async def start(interaction: discord.Interaction):
 async def reg(interaction: discord.Interaction):
     """Команда для регистрации игрока"""
     try:
-        await safe_defer_response(interaction, ephemeral=True)
+        # Пытаемся отложить ответ
+        deferred = await safe_defer_response(interaction, ephemeral=True)
+        if not deferred:
+            # Если не удалось отложить, пробуем отправить сразу
+            await safe_send_response(interaction, "❌ Произошла ошибка при обработке команды. Попробуйте еще раз.", ephemeral=True)
+            return
         
         if not interaction.guild:
             await safe_edit_response(interaction, content="❌ Эта команда работает только на сервере")
@@ -895,6 +891,12 @@ async def reg(interaction: discord.Interaction):
         
         config = get_guild_config(interaction.guild.id, interaction.guild.name)
         
+        # ВАЖНО: Проверяем и исправляем типы данных
+        if not isinstance(config['used_numbers'], set):
+            config['used_numbers'] = set(config.get('used_numbers', []))
+        if not isinstance(config['registered_players'], set):
+            config['registered_players'] = set(config.get('registered_players', []))
+            
         if not config['registration_open']:
             embed = discord.Embed(
                 title="🚫 Регистрация закрыта",
@@ -935,6 +937,7 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
+        # Генерируем уникальный номер
         while True:
             player_number = random.randint(config['min_number'], config['max_number'])
             if player_number not in config['used_numbers']:
@@ -943,8 +946,11 @@ async def reg(interaction: discord.Interaction):
         
         formatted_number = f"{player_number:03d}"
         
+        # Регистрируем игрока
         config['registered_players'].add(interaction.user.id)
         config['player_numbers'][interaction.user.id] = formatted_number
+        
+        # Добавляем в порядок регистрации если еще нет
         if interaction.user.id not in config['registration_order']:
             config['registration_order'].append(interaction.user.id)
         
@@ -953,6 +959,7 @@ async def reg(interaction: discord.Interaction):
         # АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ЛИДЕРБОРДА ПРИ РЕГИСТРАЦИИ
         asyncio.create_task(auto_update_leaderboard(interaction.guild.id))
         
+        # Выдаем роль
         registration_role = discord.utils.get(interaction.guild.roles, name=config['registration_role_name'])
         
         if not registration_role:
@@ -983,11 +990,12 @@ async def reg(interaction: discord.Interaction):
             await safe_edit_response(interaction, embed=embed)
             return
         
+        # Обновляем ник
         try:
             new_nickname = add_number_to_nick(member.display_name, formatted_number)
             await member.edit(nick=new_nickname)
         except discord.Forbidden:
-            pass
+            pass  # Нет прав на изменение ника - это не критично
         
         embed = discord.Embed(
             title="✅ РЕГИСТРАЦИЯ УСПЕШНА",
@@ -1025,8 +1033,11 @@ async def reg(interaction: discord.Interaction):
         
     except Exception as e:
         logger.error(f"❌ Ошибка в команде reg: {e}")
-        await safe_send_response(interaction, "❌ Произошла ошибка при регистрации", ephemeral=True)
-
+        # Пробуем отправить сообщение об ошибке разными способами
+        try:
+            await safe_send_response(interaction, "❌ Произошла ошибка при регистрации", ephemeral=True)
+        except Exception as e2:
+            logger.error(f"❌ Не удалось отправить сообщение об ошибке: {e2}")
 @bot.tree.command(name="status", description="Проверить статус регистрации")
 async def status(interaction: discord.Interaction):
     """Команда для проверки статуса регистрации"""
@@ -2738,4 +2749,5 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
