@@ -87,9 +87,7 @@ def get_guild_config(guild_id: int, guild_name: str = "Unknown Server") -> dict:
         # Создаем новую конфигурацию для сервера
         new_config = DEFAULT_CONFIG.copy()
         new_config['guild_name'] = guild_name
-        # Преобразуем set в list для JSON сериализации
-        new_config['used_numbers'] = list(new_config['used_numbers'])
-        new_config['registered_players'] = list(new_config['registered_players'])
+        # НЕ преобразуем set в list здесь - это делается только при сохранении в JSON
         GUILD_DATA[guild_id] = new_config
         logger.info(f"🆕 Создана новая конфигурация для сервера {guild_name} ({guild_id})")
     return GUILD_DATA[guild_id]
@@ -2740,3 +2738,4 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
