@@ -73,7 +73,7 @@ LOCALIZATIONS = {
         'error_reg_closed': "🚫 Регистрация закрыта",
         'error_wait_for_open': "Ожидайте открытия регистрации администратором",
         'error_all_spots_taken': "🎯 Все места заняты",
-        'error_registration_completed': "Регистрация завершена, все {} мест распределены",
+        'error_registration_completed': "Регистрация завершена, все {max_players} мест распределены",
         'error_already_registered': "⚠️ Уже зарегистрирован",
         'error_already_participating': "Вы уже участвуете в событии",
         'error_system': "❌ Ошибка системы",
@@ -84,21 +84,21 @@ LOCALIZATIONS = {
         
         # Админ команды
         'players_title': "✅ МАКСИМАЛЬНОЕ ЧИСЛО ИГРОКОВ ИЗМЕНЕНО",
-        'players_description': "Установлено новое максимальное количество игроков для сервера **{}**",
+        'players_description': "Установлено новое максимальное количество игроков для сервера **{guild_name}**",
         'players_was': "📊 Было",
         'players_now': "📈 Стало",
         'players_current_stats': "🎯 Текущая статистика",
         'players_registered': "Зарегистрировано",
         
         'reward_title': "💰 НАГРАДА ИЗМЕНЕНА",
-        'reward_description': "Установлена новая награда за участие для сервера **{}**",
+        'reward_description': "Установлена новая награда за участие для сервера **{guild_name}**",
         'reward_was': "💵 Было",
         'reward_now': "💸 Стало",
         'reward_info': "💡 Информация",
         'reward_distribution_info': "Эта награда будет выдана каждому участнику при завершении игры командой `/end`",
         
         'server_info_title': "⚙️ НАСТРОЙКИ СЕРВЕРА",
-        'server_info_description': "Конфигурация для **{}**",
+        'server_info_description': "Конфигурация для **{guild_name}**",
         'server_info_limits': "📊 Лимиты",
         'server_info_max_players': "Макс. игроков",
         'server_info_number_range': "Диапазон номеров",
@@ -113,7 +113,7 @@ LOCALIZATIONS = {
         'server_info_admin_commands': "Используйте команды:\n• `/players <число>` - изменить макс. игроков\n• `/reward <сумма>` - изменить награду\n• `/start` - открыть регистрацию\n• `/end` - завершить игру",
         
         'language_title': "🌐 ЯЗЫК ИЗМЕНЕН",
-        'language_description': "Язык бота установлен на **{}**",
+        'language_description': "Язык бота установлен на **{language_name}**",
         'language_current': "💬 Текущий язык",
         'language_instruction': "📖 Инструкция",
         'language_change_info': "Используйте `/language <язык>` для смены языка",
@@ -160,7 +160,7 @@ LOCALIZATIONS = {
         'error_reg_closed': "🚫 Registration closed",
         'error_wait_for_open': "Wait for administrator to open registration",
         'error_all_spots_taken': "🎯 All spots taken",
-        'error_registration_completed': "Registration completed, all {} spots distributed",
+        'error_registration_completed': "Registration completed, all {max_players} spots distributed",
         'error_already_registered': "⚠️ Already registered",
         'error_already_participating': "You are already participating in the event",
         'error_system': "❌ System error",
@@ -171,21 +171,21 @@ LOCALIZATIONS = {
         
         # Админ команды
         'players_title': "✅ MAXIMUM PLAYER COUNT CHANGED",
-        'players_description': "Set new maximum player count for server **{}**",
+        'players_description': "Set new maximum player count for server **{guild_name}**",
         'players_was': "📊 Was",
         'players_now': "📈 Now",
         'players_current_stats': "🎯 Current statistics",
         'players_registered': "Registered",
         
         'reward_title': "💰 REWARD CHANGED",
-        'reward_description': "Set new participation reward for server **{}**",
+        'reward_description': "Set new participation reward for server **{guild_name}**",
         'reward_was': "💵 Was",
         'reward_now': "💸 Now",
         'reward_info': "💡 Information",
         'reward_distribution_info': "This reward will be given to each participant when ending the game with `/end`",
         
         'server_info_title': "⚙️ SERVER SETTINGS",
-        'server_info_description': "Configuration for **{}**",
+        'server_info_description': "Configuration for **{guild_name}**",
         'server_info_limits': "📊 Limits",
         'server_info_max_players': "Max players",
         'server_info_number_range': "Number range",
@@ -200,7 +200,7 @@ LOCALIZATIONS = {
         'server_info_admin_commands': "Use commands:\n• `/players <number>` - change max players\n• `/reward <amount>` - change reward\n• `/start` - open registration\n• `/end` - end game",
         
         'language_title': "🌐 LANGUAGE CHANGED",
-        'language_description': "Bot language set to **{}**",
+        'language_description': "Bot language set to **{language_name}**",
         'language_current': "💬 Current language",
         'language_instruction': "📖 Instruction",
         'language_change_info': "Use `/language <language>` to change language",
@@ -210,17 +210,26 @@ LOCALIZATIONS = {
 
 def get_localized_text(guild_id: int, key: str, **kwargs):
     """Получает локализованный текст для сервера"""
-    config = get_guild_config(guild_id)
-    language = config.get('language', 'ru')
-    text = LOCALIZATIONS[language].get(key, key)
-    
-    if kwargs:
-        try:
-            text = text.format(**kwargs)
-        except KeyError:
-            pass
-    
-    return text
+    try:
+        config = get_guild_config(guild_id)
+        language = config.get('language', 'ru')
+        text = LOCALIZATIONS[language].get(key, key)
+        
+        # Безопасное форматирование с обработкой ошибок
+        if kwargs:
+            try:
+                # Заменяем только существующие ключи
+                for k, v in kwargs.items():
+                    placeholder = "{" + k + "}"
+                    if placeholder in text:
+                        text = text.replace(placeholder, str(v))
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка форматирования текста '{key}': {e}")
+        
+        return text
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения локализованного текста: {e}")
+        return key
 
 # ==================== КОНЕЦ СИСТЕМЫ ЯЗЫКОВ ====================
 
@@ -284,12 +293,24 @@ def get_guild_config(guild_id: int, guild_name: str = "Unknown Server") -> dict:
         # Создаем новую конфигурацию для сервера
         new_config = DEFAULT_CONFIG.copy()
         new_config['guild_name'] = guild_name
-        # Преобразуем set в list для JSON сериализации
-        new_config['used_numbers'] = list(new_config['used_numbers'])
-        new_config['registered_players'] = list(new_config['registered_players'])
+        
+        # Убеждаемся, что множества действительно являются множествами
+        if isinstance(new_config['used_numbers'], list):
+            new_config['used_numbers'] = set(new_config['used_numbers'])
+        if isinstance(new_config['registered_players'], list):
+            new_config['registered_players'] = set(new_config['registered_players'])
+        
         GUILD_DATA[guild_id] = new_config
         logger.info(f"🆕 Создана новая конфигурация для сервера {guild_name} ({guild_id})")
-    return GUILD_DATA[guild_id]
+    
+    # Всегда проверяем типы данных при возврате конфигурации
+    config = GUILD_DATA[guild_id]
+    if isinstance(config.get('used_numbers'), list):
+        config['used_numbers'] = set(config['used_numbers'])
+    if isinstance(config.get('registered_players'), list):
+        config['registered_players'] = set(config['registered_players'])
+    
+    return config
 
 def convert_sets_to_lists(config: dict) -> dict:
     """Конвертирует множества в списки для JSON сериализации"""
@@ -451,11 +472,17 @@ async def restore_from_backup(backup_data, guild_id: int):
         
         # Восстанавливаем used_numbers
         if 'used_numbers' in backup_data:
-            config['used_numbers'] = set(backup_data['used_numbers'])
+            if isinstance(backup_data['used_numbers'], list):
+                config['used_numbers'] = set(backup_data['used_numbers'])
+            else:
+                config['used_numbers'] = set(backup_data['used_numbers'])
         
         # Восстанавливаем registered_players
         if 'registered_players' in backup_data:
-            config['registered_players'] = set(backup_data['registered_players'])
+            if isinstance(backup_data['registered_players'], list):
+                config['registered_players'] = set(backup_data['registered_players'])
+            else:
+                config['registered_players'] = set(backup_data['registered_players'])
         
         # Восстанавливаем player_numbers
         if 'player_numbers' in backup_data:
@@ -777,15 +804,26 @@ async def safe_send_response(interaction, *args, **kwargs):
     try:
         if not interaction.response.is_done():
             await interaction.response.send_message(*args, **kwargs)
+            return True
         else:
+            # Если ответ уже отправлен, используем followup
             await interaction.followup.send(*args, **kwargs)
-        return True
+            return True
     except discord.errors.NotFound:
         logger.warning("⚠️ Взаимодействие не найдено (возможно истекло время)")
         return False
     except discord.errors.HTTPException as e:
-        logger.error(f"❌ Ошибка HTTP при отправке ответа: {e}")
-        return False
+        if e.status == 400 and "already acknowledged" in str(e):
+            logger.warning("⚠️ Взаимодействие уже обработано")
+            try:
+                await interaction.followup.send(*args, **kwargs)
+                return True
+            except Exception as followup_error:
+                logger.error(f"❌ Ошибка при отправке followup: {followup_error}")
+                return False
+        else:
+            logger.error(f"❌ Ошибка HTTP при отправке ответа: {e}")
+            return False
     except Exception as e:
         logger.error(f"❌ Неизвестная ошибка при отправке ответа: {e}")
         return False
@@ -795,6 +833,9 @@ async def safe_edit_response(interaction, *args, **kwargs):
     try:
         await interaction.edit_original_response(*args, **kwargs)
         return True
+    except discord.errors.NotFound:
+        logger.warning("⚠️ Сообщение для редактирования не найдено")
+        return False
     except Exception as e:
         logger.error(f"❌ Ошибка при редактировании ответа: {e}")
         return False
@@ -806,8 +847,11 @@ async def safe_defer_response(interaction, ephemeral=False):
             await interaction.response.defer(ephemeral=ephemeral)
             return True
         return False
+    except discord.errors.NotFound:
+        logger.warning("⚠️ Взаимодействие не найдено при откладывании")
+        return False
     except Exception as e:
-        logger.warning(f"⚠️ Не удалось отложить ответ (возможно уже обработан): {e}")
+        logger.warning(f"⚠️ Не удалось отложить ответ: {e}")
         return False
 
 async def auto_update_leaderboard(guild_id: int):
@@ -867,7 +911,7 @@ async def set_language(interaction: discord.Interaction, language: app_commands.
         await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
-            await safe_edit_response(interaction, content=get_localized_text(interaction.guild.id if interaction.guild else 0, 'error_guild_only'))
+            await safe_edit_response(interaction, content=get_localized_text(0, 'error_guild_only'))
             return
         
         config = get_guild_config(interaction.guild.id, interaction.guild.name)
@@ -877,6 +921,7 @@ async def set_language(interaction: discord.Interaction, language: app_commands.
         await save_data_with_backup(interaction.guild.id)
         
         language_name = "Русский" if language.value == 'ru' else "English"
+        old_language_name = "Русский" if old_language == 'ru' else "English"
         
         embed = discord.Embed(
             title=get_localized_text(interaction.guild.id, 'language_title'),
@@ -887,6 +932,12 @@ async def set_language(interaction: discord.Interaction, language: app_commands.
         embed.add_field(
             name=get_localized_text(interaction.guild.id, 'language_current'),
             value=f"```{language_name}```",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📝 Было",
+            value=f"```{old_language_name}```",
             inline=True
         )
         
@@ -914,7 +965,7 @@ async def set_max_players(interaction: discord.Interaction, максимальн
         await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
-            await safe_edit_response(interaction, content=get_localized_text(interaction.guild.id if interaction.guild else 0, 'error_guild_only'))
+            await safe_edit_response(interaction, content=get_localized_text(0, 'error_guild_only'))
             return
         
         if максимальное_число < 1 or максимальное_число > 500:
@@ -965,7 +1016,7 @@ async def set_reward(interaction: discord.Interaction, награда: int):
         await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
-            await safe_edit_response(interaction, content=get_localized_text(interaction.guild.id if interaction.guild else 0, 'error_guild_only'))
+            await safe_edit_response(interaction, content=get_localized_text(0, 'error_guild_only'))
             return
         
         if награда < 0 or награда > 1000000:
@@ -1015,7 +1066,7 @@ async def server_info(interaction: discord.Interaction):
         await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
-            await safe_edit_response(interaction, content=get_localized_text(interaction.guild.id if interaction.guild else 0, 'error_guild_only'))
+            await safe_edit_response(interaction, content=get_localized_text(0, 'error_guild_only'))
             return
         
         config = get_guild_config(interaction.guild.id, interaction.guild.name)
@@ -1077,7 +1128,7 @@ async def start(interaction: discord.Interaction):
         await safe_defer_response(interaction, ephemeral=False)
         
         if not interaction.guild:
-            await safe_edit_response(interaction, content=get_localized_text(interaction.guild.id if interaction.guild else 0, 'error_guild_only'))
+            await safe_edit_response(interaction, content=get_localized_text(0, 'error_guild_only'))
             return
         
         config = get_guild_config(interaction.guild.id, interaction.guild.name)
@@ -1133,10 +1184,16 @@ async def reg(interaction: discord.Interaction):
         await safe_defer_response(interaction, ephemeral=True)
         
         if not interaction.guild:
-            await safe_edit_response(interaction, content=get_localized_text(interaction.guild.id if interaction.guild else 0, 'error_guild_only'))
+            await safe_edit_response(interaction, content=get_localized_text(0, 'error_guild_only'))
             return
         
         config = get_guild_config(interaction.guild.id, interaction.guild.name)
+        
+        # Убедимся, что used_numbers и registered_players являются множествами
+        if not isinstance(config['used_numbers'], set):
+            config['used_numbers'] = set(config['used_numbers'])
+        if not isinstance(config['registered_players'], set):
+            config['registered_players'] = set(config['registered_players'])
         
         if not config['registration_open']:
             embed = discord.Embed(
@@ -2977,3 +3034,4 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
