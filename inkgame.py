@@ -211,7 +211,7 @@ LOCALIZATIONS = {
 def get_localized_text(guild_id: int, key: str, **kwargs):
     """Получает локализованный текст для сервера"""
     try:
-         = get_guild_(guild_id)
+        config = get_guild_config(guild_id)
         language = config.get('language', 'ru')
         text = LOCALIZATIONS[language].get(key, key)
         
@@ -3050,5 +3050,6 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
