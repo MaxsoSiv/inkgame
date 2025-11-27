@@ -185,7 +185,7 @@ LOCALIZATIONS = {
         'reward_distribution_info': "This reward will be given to each participant when ending the game with `/end`",
         
         'server_info_title': "⚙️ SERVER SETTINGS",
-        'server_info_description': "Configuration for **{guild_name}**",
+        'server_info_description': "uration for **{guild_name}**",
         'server_info_limits': "📊 Limits",
         'server_info_max_players': "Max players",
         'server_info_number_range': "Number range",
@@ -211,7 +211,7 @@ LOCALIZATIONS = {
 def get_localized_text(guild_id: int, key: str, **kwargs):
     """Получает локализованный текст для сервера"""
     try:
-        config = get_guild_config(guild_id)
+         = get_guild_(guild_id)
         language = config.get('language', 'ru')
         text = LOCALIZATIONS[language].get(key, key)
         
@@ -455,7 +455,7 @@ async def save_data():
             pass
         return False
 
-async def restore_from_backup(backup_data, guild_id: int):
+async def restore_from_backup(backup_config_data, guild_id: int):
     """Восстанавливает данные из бэкапа для конкретного сервера"""
     try:
         # Сохраняем текущие данные как резервную копию перед восстановлением
@@ -471,23 +471,23 @@ async def restore_from_backup(backup_data, guild_id: int):
         config['registration_order'].clear()
         
         # Восстанавливаем used_numbers
-        if 'used_numbers' in backup_data:
-            if isinstance(backup_data['used_numbers'], list):
-                config['used_numbers'] = set(backup_data['used_numbers'])
+        if 'used_numbers' in backup_config_data:
+            if isinstance(backup_config_data['used_numbers'], list):
+                config['used_numbers'] = set(backup_config_data['used_numbers'])
             else:
-                config['used_numbers'] = set(backup_data['used_numbers'])
+                config['used_numbers'] = set(backup_config_data['used_numbers'])
         
         # Восстанавливаем registered_players
-        if 'registered_players' in backup_data:
-            if isinstance(backup_data['registered_players'], list):
-                config['registered_players'] = set(backup_data['registered_players'])
+        if 'registered_players' in backup_config_data:
+            if isinstance(backup_config_data['registered_players'], list):
+                config['registered_players'] = set(backup_config_data['registered_players'])
             else:
-                config['registered_players'] = set(backup_data['registered_players'])
+                config['registered_players'] = set(backup_config_data['registered_players'])
         
         # Восстанавливаем player_numbers
-        if 'player_numbers' in backup_data:
+        if 'player_numbers' in backup_config_data:
             config['player_numbers'] = {}
-            for user_id_str, number_str in backup_data['player_numbers'].items():
+            for user_id_str, number_str in backup_config_data['player_numbers'].items():
                 try:
                     user_id = int(user_id_str)
                     config['player_numbers'][user_id] = number_str
@@ -496,9 +496,9 @@ async def restore_from_backup(backup_data, guild_id: int):
                     continue
         
         # Восстанавливаем player_titles
-        if 'player_titles' in backup_data:
+        if 'player_titles' in backup_config_data:
             config['player_titles'] = {}
-            for user_id_str, title_data in backup_data['player_titles'].items():
+            for user_id_str, title_data in backup_config_data['player_titles'].items():
                 try:
                     user_id = int(user_id_str)
                     if isinstance(title_data, str):
@@ -513,32 +513,36 @@ async def restore_from_backup(backup_data, guild_id: int):
                     continue
         
         # Восстанавливаем registration_order
-        if 'registration_order' in backup_data:
-            config['registration_order'] = backup_data['registration_order']
+        if 'registration_order' in backup_config_data:
+            config['registration_order'] = backup_config_data['registration_order']
         else:
             config['registration_order'] = list(config['registered_players'])
         
         # Восстанавливаем лидерборд
-        if 'leaderboard_message_id' in backup_data:
-            config['leaderboard_message_id'] = backup_data['leaderboard_message_id']
-        if 'leaderboard_channel_id' in backup_data:
-            config['leaderboard_channel_id'] = backup_data['leaderboard_channel_id']
+        if 'leaderboard_message_id' in backup_config_data:
+            config['leaderboard_message_id'] = backup_config_data['leaderboard_message_id']
+        if 'leaderboard_channel_id' in backup_config_data:
+            config['leaderboard_channel_id'] = backup_config_data['leaderboard_channel_id']
         
         # Восстанавливаем флаги
-        if 'registration_open' in backup_data:
-            config['registration_open'] = backup_data['registration_open']
-        if 'game_active' in backup_data:
-            config['game_active'] = backup_data['game_active']
-        if 'prizes_distributed' in backup_data:
-            config['prizes_distributed'] = backup_data['prizes_distributed']
+        if 'registration_open' in backup_config_data:
+            config['registration_open'] = backup_config_data['registration_open']
+        if 'game_active' in backup_config_data:
+            config['game_active'] = backup_config_data['game_active']
+        if 'prizes_distributed' in backup_config_data:
+            config['prizes_distributed'] = backup_config_data['prizes_distributed']
         else:
             config['prizes_distributed'] = False
         
         # Восстанавливаем настройки
-        if 'max_players' in backup_data:
-            config['max_players'] = backup_data['max_players']
-        if 'reward_amount' in backup_data:
-            config['reward_amount'] = backup_data['reward_amount']
+        if 'max_players' in backup_config_data:
+            config['max_players'] = backup_config_data['max_players']
+        if 'reward_amount' in backup_config_data:
+            config['reward_amount'] = backup_config_data['reward_amount']
+        
+        # Восстанавливаем язык
+        if 'language' in backup_config_data:
+            config['language'] = backup_config_data['language']
         
         # Сохраняем восстановленные данные
         await save_data()
@@ -549,7 +553,7 @@ async def restore_from_backup(backup_data, guild_id: int):
     except Exception as e:
         logger.error(f"❌ Ошибка восстановления из бэкапа для сервера {guild_id}: {e}")
         return False
-
+        
 async def restore_players_from_roles(guild, config: dict):
     """Восстанавливает игроков из ролей для конкретного сервера"""
     try:
@@ -2439,9 +2443,21 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
             await interaction.edit_original_response(embed=embed)
             return
         
-        # Проверяем структуру данных
+        # ИСПРАВЛЕНИЕ: Проверяем структуру данных - поля находятся внутри 'config'
+        if 'config' not in backup_data:
+            embed = discord.Embed(
+                title="❌ НЕВЕРНЫЙ ФОРМАТ",
+                description="В файле отсутствует раздел 'config' с данными",
+                color=0xff0000
+            )
+            await interaction.edit_original_response(embed=embed)
+            return
+        
+        config_data = backup_data['config']
+        
+        # Проверяем обязательные поля внутри config
         required_fields = ['used_numbers', 'registered_players', 'player_numbers', 'player_titles']
-        missing_fields = [field for field in required_fields if field not in backup_data]
+        missing_fields = [field for field in required_fields if field not in config_data]
         
         if missing_fields:
             embed = discord.Embed(
@@ -2467,9 +2483,9 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
         warning_embed.add_field(
             name="📊 Данные для восстановления",
             value=(
-                f"• Игроков: {len(backup_data.get('registered_players', []))}\n"
-                f"• Номеров: {len(backup_data.get('used_numbers', []))}\n"
-                f"• Титулов: {len(backup_data.get('player_titles', {}))}\n"
+                f"• Игроков: {len(config_data.get('registered_players', []))}\n"
+                f"• Номеров: {len(config_data.get('used_numbers', []))}\n"
+                f"• Титулов: {len(config_data.get('player_titles', {}))}\n"
                 f"• Версия: {backup_data.get('version', 'Неизвестно')}"
             ),
             inline=False
@@ -2515,8 +2531,8 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                     )
                     await interaction.response.edit_message(embed=restoring_embed, view=None)
                     
-                    # Восстанавливаем данные с использованием асинхронной функции
-                    success = await restore_from_backup(self.backup_data, self.guild_id)
+                    # ИСПРАВЛЕНИЕ: Передаем config_data вместо всего backup_data
+                    success = await restore_from_backup(self.backup_data['config'], self.guild_id)
                     
                     if success:
                         # Обновляем лидерборд
@@ -3034,4 +3050,5 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
