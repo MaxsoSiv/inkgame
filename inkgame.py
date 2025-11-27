@@ -2443,79 +2443,137 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
             await interaction.edit_original_response(embed=embed)
             return
         
-        # ИСПРАВЛЕНИЕ: Проверяем структуру данных - поля находятся внутри 'config'
-        if 'config' not in backup_data:
-            embed = discord.Embed(
-                title="❌ НЕВЕРНЫЙ ФОРМАТ",
-                description="В файле отсутствует раздел 'config' с данными",
-                color=0xff0000
-            )
-            await interaction.edit_original_response(embed=embed)
-            return
+        # ОТЛАДОЧНАЯ ИНФОРМАЦИЯ: выводим все ключи для диагностики
+        logger.info(f"🔍 Ключи в backup_data: {list(backup_data.keys())}")
         
-        config_data = backup_data['config']
+        # Проверяем структуру данных - поддерживаем оба формата
+        config_data = None
         
-        # Проверяем обязательные поля внутри config
+        # Новый формат с разделом config
+        if 'config' in backup_data:
+            config_data = backup_data['config']
+            logger.info("📁 Используется новый формат бэкапа (с config)")
+        # Старый формат - данные в корне
+        else:
+            config_data = backup_data
+            logger.info("📁 Используется старый формат бэкапа (данные в корне)")
+        
+        # ОТЛАДОЧНАЯ ИНФОРМАЦИЯ: выводим ключи config_data
+        logger.info(f"🔍 Ключи в config_data: {list(config_data.keys())}")
+        
+        # Проверяем обязательные поля с более гибкой логикой
         required_fields = ['used_numbers', 'registered_players', 'player_numbers', 'player_titles']
-        missing_fields = [field for field in required_fields if field not in config_data]
+        missing_fields = []
         
+        for field in required_fields:
+            if field not in config_data:
+                missing_fields.append(field)
+        
+        # Если есть отсутствующие поля, показываем подробную ошибку
         if missing_fields:
+            # Создаем подробное сообщение об ошибке
+            error_details = []
+            for field in required_fields:
+                status = "✅ ЕСТЬ" if field in config_data else "❌ ОТСУТСТВУЕТ"
+                error_details.append(f"{status} {field}")
+            
             embed = discord.Embed(
-                title="❌ НЕВЕРНЫЙ ФОРМАТ",
-                description=f"В файле отсутствуют обязательные поля: {', '.join(missing_fields)}",
+                title="❌ НЕВЕРНЫЙ ФОРМАТ ФАЙЛА",
+                description=(
+                    "Файл бэкапа имеет несовместимый формат.\n\n"
+                    "**Проверка полей:**\n" + "\n".join(error_details) + "\n\n"
+                    "**Возможные причины:**\n"
+                    "• Файл создан в старой версии бота\n"
+                    "• Файл был изменен вручную\n"
+                    "• Это не файл бэкапа игры"
+                ),
                 color=0xff0000
             )
+            
+            # Добавляем информацию о структуре файла
+            embed.add_field(
+                name="📊 Структура файла",
+                value=f"```json\n{json.dumps(list(backup_data.keys()), indent=2)}\n```",
+                inline=False
+            )
+            
             await interaction.edit_original_response(embed=embed)
             return
+        
+        # Если все поля присутствуют, продолжаем
+        logger.info("✅ Все обязательные поля присутствуют в бэкапе")
         
         # Предупреждение о перезаписи
         warning_embed = discord.Embed(
-            title="⚠️ ПРЕДУПРЕЖДЕНИЕ",
+            title="⚠️ ПРЕДУПРЕЖДЕНИЕ О ВОССТАНОВЛЕНИИ",
             description=(
-                "Вы собираетесь восстановить данные из резервной копии.\n\n"
-                "**ВСЕ ТЕКУЩИЕ ДАННЫЕ БУДУТ ПЕРЕЗАПИСАНЫ!**\n\n"
+                "**ВНИМАНИЕ:** Вы собираетесь восстановить данные из резервной копии.\n\n"
+                "🚨 **ВСЕ ТЕКУЩИЕ ДАННЫЕ ИГРЫ БУДУТ БЕЗВОЗВРАТНО УДАЛЕНЫ И ЗАМЕНЕНЫ!**\n\n"
                 "Это действие нельзя отменить.\n"
-                "Пожалуйста, подтвердите восстановление."
+                "Убедитесь, что это именно тот бэкап, который вы хотите восстановить."
             ),
             color=0xffa500
         )
         
+        # Добавляем информацию о бэкапе
         warning_embed.add_field(
-            name="📊 Данные для восстановления",
+            name="📋 ИНФОРМАЦИЯ О БЭКАПЕ",
             value=(
-                f"• Игроков: {len(config_data.get('registered_players', []))}\n"
-                f"• Номеров: {len(config_data.get('used_numbers', []))}\n"
-                f"• Титулов: {len(config_data.get('player_titles', {}))}\n"
-                f"• Версия: {backup_data.get('version', 'Неизвестно')}"
+                f"• Сервер: **{config_data.get('guild_name', 'Неизвестно')}**\n"
+                f"• Игроков: **{len(config_data.get('registered_players', []))}**\n"
+                f"• Номеров: **{len(config_data.get('used_numbers', []))}**\n"
+                f"• Титулов: **{len(config_data.get('player_titles', {}))}**\n"
+                f"• Регистрация: **{'Открыта' if config_data.get('registration_open') else 'Закрыта'}**\n"
+                f"• Дата: **{backup_data.get('backup_timestamp', 'Неизвестно')}**"
             ),
             inline=False
         )
         
         warning_embed.add_field(
-            name="🔄 Действие",
-            value="Нажмите кнопку ниже для подтверждения восстановления",
-            inline=False
+            name="🔄 БУДУТ ВОССТАНОВЛЕНЫ",
+            value=(
+                "• Список игроков и их номера\n"
+                "• Порядок регистрации\n"
+                "• Приобретенные титулы\n"
+                "• Настройки сервера\n"
+                "• Статус игры"
+            ),
+            inline=True
         )
         
+        warning_embed.add_field(
+            name="🗑️ БУДУТ УДАЛЕНЫ",
+            value=(
+                "• Текущие данные игроков\n"
+                "• Текущие номера\n"
+                "• Текущие настройки\n"
+                "• Текущий статус игры"
+            ),
+            inline=True
+        )
+        
+        warning_embed.set_footer(text="Нажмите кнопку ниже для подтверждения восстановления")
+
         # Создаем кнопки подтверждения
         class RestoreConfirmView(discord.ui.View):
-            def __init__(self, backup_data, guild_id):
-                super().__init__(timeout=60)
+            def __init__(self, backup_data, guild_id, config_data):
+                super().__init__(timeout=120)
                 self.backup_data = backup_data
                 self.guild_id = guild_id
+                self.config_data = config_data
                 self.confirmed = False
             
-            @discord.ui.button(label="✅ Подтвердить восстановление", style=discord.ButtonStyle.danger)
+            @discord.ui.button(label="✅ ПОДТВЕРДИТЬ ВОССТАНОВЛЕНИЕ", style=discord.ButtonStyle.danger)
             async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
                 self.confirmed = True
                 await self.perform_restore(interaction)
                 self.stop()
             
-            @discord.ui.button(label="❌ Отмена", style=discord.ButtonStyle.secondary)
+            @discord.ui.button(label="❌ ОТМЕНА", style=discord.ButtonStyle.secondary)
             async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
                 embed = discord.Embed(
                     title="❌ ВОССТАНОВЛЕНИЕ ОТМЕНЕНО",
-                    description="Действие отменено пользователем",
+                    description="Действие отменено пользователем. Данные не были изменены.",
                     color=0xff0000
                 )
                 await interaction.response.edit_message(embed=embed, view=None)
@@ -2526,13 +2584,18 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                     # Обновляем сообщение о начале восстановления
                     restoring_embed = discord.Embed(
                         title="🔄 ВОССТАНОВЛЕНИЕ ДАННЫХ",
-                        description="Идет процесс восстановления...",
+                        description="Идет процесс восстановления данных из бэкапа...",
                         color=0xffa500
+                    )
+                    restoring_embed.add_field(
+                        name="📊 Прогресс",
+                        value="```Начинаю восстановление...```",
+                        inline=False
                     )
                     await interaction.response.edit_message(embed=restoring_embed, view=None)
                     
-                    # ИСПРАВЛЕНИЕ: Передаем config_data вместо всего backup_data
-                    success = await restore_from_backup(self.backup_data['config'], self.guild_id)
+                    # Восстанавливаем данные
+                    success = await restore_from_backup(self.config_data, self.guild_id)
                     
                     if success:
                         # Обновляем лидерборд
@@ -2542,29 +2605,30 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                         
                         # Сообщение об успехе
                         success_embed = discord.Embed(
-                            title="✅ ДАННЫЕ ВОССТАНОВЛЕНЫ",
-                            description="Все данные успешно восстановлены из резервной копии!",
+                            title="✅ ДАННЫЕ УСПЕШНО ВОССТАНОВЛЕНЫ",
+                            description="Все данные игры были восстановлены из резервной копии!",
                             color=0x00ff00
                         )
                         
                         success_embed.add_field(
-                            name="📊 Восстановленные данные",
+                            name="📊 ВОССТАНОВЛЕННЫЕ ДАННЫЕ",
                             value=(
-                                f"• Игроков: {len(config['registered_players'])}\n"
-                                f"• Номеров: {len(config['used_numbers'])}\n"
-                                f"• Титулов: {len(config['player_titles'])}\n"
-                                f"• Регистрация: {'Открыта' if config['registration_open'] else 'Закрыта'}\n"
-                                f"• Игра: {'Активна' if config['game_active'] else 'Неактивна'}"
+                                f"• Игроков: **{len(config['registered_players'])}**\n"
+                                f"• Номеров: **{len(config['used_numbers'])}**\n"
+                                f"• Титулов: **{len(config['player_titles'])}**\n"
+                                f"• Регистрация: **{'Открыта' if config['registration_open'] else 'Закрыта'}**\n"
+                                f"• Игра: **{'Активна' if config['game_active'] else 'Неактивна'}**"
                             ),
                             inline=False
                         )
                         
                         success_embed.add_field(
-                            name="💡 Следующие шаги",
+                            name="💡 РЕКОМЕНДАЦИИ",
                             value=(
                                 "• Проверьте корректность данных\n"
                                 "• Убедитесь, что лидерборд отображается правильно\n"
-                                "• При необходимости используйте `/update_leaderboard`"
+                                "• При необходимости используйте `/update_leaderboard`\n"
+                                "• Проверьте настройки сервера командой `/server_info`"
                             ),
                             inline=False
                         )
@@ -2577,7 +2641,7 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                     else:
                         error_embed = discord.Embed(
                             title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
-                            description="Не удалось восстановить данные из файла",
+                            description="Не удалось восстановить данные из файла. Проверьте лог для подробностей.",
                             color=0xff0000
                         )
                         await interaction.edit_original_response(embed=error_embed)
@@ -2585,14 +2649,14 @@ async def restore(interaction: discord.Interaction, файл: discord.Attachment
                 except Exception as e:
                     logger.error(f"❌ Ошибка при восстановлении данных: {e}")
                     error_embed = discord.Embed(
-                        title="❌ ОШИБКА ВОССТАНОВЛЕНИЯ",
-                        description=f"Произошла ошибка при восстановлении: {str(e)}",
+                        title="❌ КРИТИЧЕСКАЯ ОШИБКА",
+                        description=f"Произошла непредвиденная ошибка при восстановлении: {str(e)}",
                         color=0xff0000
                     )
                     await interaction.edit_original_response(embed=error_embed)
         
         # Отправляем предупреждение с кнопками
-        view = RestoreConfirmView(backup_data, interaction.guild.id)
+        view = RestoreConfirmView(backup_data, interaction.guild.id, config_data)
         await interaction.edit_original_response(embed=warning_embed, view=view)
         
     except Exception as e:
@@ -3050,6 +3114,7 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
