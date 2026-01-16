@@ -1653,13 +1653,13 @@ async def titles(interaction: discord.Interaction):
         
         embed.add_field(
             name="🎒 Инвентарь",
-            value="Используйте `/inv` для просмотра ваших титулов",
+            value="Используйте `/ink_inv` для просмотра ваших титулов",
             inline=False
         )
         
         embed.add_field(
             name="👑 Надеть титул",
-            value="Используйте `/equip <титул>` чтобы надеть титул",
+            value="Используйте `/ink_equip <титул>` чтобы надеть титул",
             inline=False
         )
         
@@ -1672,8 +1672,8 @@ async def titles(interaction: discord.Interaction):
         logger.error(f"❌ Ошибка в команде titles: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при выполнении команды", ephemeral=True)
 
-@bot.tree.command(name="equip", description="Надеть титул из инвентаря")
-async def equip(interaction: discord.Interaction, название_титула: str):
+@bot.tree.command(name="ink_equip", description="Надеть титул из инвентаря")
+async def ink_equip(interaction: discord.Interaction, название_титула: str):
     """Надевает титул из инвентаря"""
     try:
         await safe_defer_response(interaction, ephemeral=True)
@@ -1725,8 +1725,8 @@ async def equip(interaction: discord.Interaction, название_титула:
         logger.error(f"❌ Ошибка в команде equip: {e}")
         await safe_send_response(interaction, "❌ Произошла ошибка при надевании титула", ephemeral=True)
 
-@bot.tree.command(name="inv", description="Показать инвентарь титулов")
-async def inv(interaction: discord.Interaction):
+@bot.tree.command(name="ink_inv", description="Показать инвентарь титулов")
+async def ink_inv(interaction: discord.Interaction):
     """Показывает инвентарь титулов"""
     try:
         await safe_defer_response(interaction, ephemeral=True)
@@ -1779,7 +1779,7 @@ async def inv(interaction: discord.Interaction):
         
         embed.add_field(
             name="👑 Надеть титул",
-            value="Используйте `/equip <название_титула>` чтобы надеть титул",
+            value="Используйте `/ink_equip <название_титула>` чтобы надеть титул",
             inline=False
         )
         
@@ -3114,6 +3114,7 @@ async def on_ready():
 # Запуск бота
 if __name__ == "__main__":
     bot.run(DISCORD_TOKEN)
+
 
 
 
